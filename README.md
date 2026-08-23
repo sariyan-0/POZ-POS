@@ -2,9 +2,9 @@
 
 <div align="center">
 
-### Modern mobile point-of-sale built with React Native
+### A modern mobile POS app built with React Native
 
-Checkout, local transaction history, inventory tools, backend connectivity, and Stripe Terminal reader workflows in one app.
+Built for quick checkout, clean in-store workflows, and teams who want more control over their POS setup.
 
 ![React Native](https://img.shields.io/badge/React%20Native-0.87-111827?style=for-the-badge&logo=react&logoColor=61DAFB)
 ![TypeScript](https://img.shields.io/badge/TypeScript-6.x-111827?style=for-the-badge&logo=typescript&logoColor=3178C6)
@@ -17,25 +17,27 @@ Checkout, local transaction history, inventory tools, backend connectivity, and 
 
 ## Overview
 
-**PowersOfZeroPOS** is a React Native mobile POS application designed for fast in-person checkout and operational simplicity. It combines a touch-first checkout flow, product and inventory management, locally persisted sales data, configurable backend connectivity, and Stripe Terminal reader support for in-person payments.
+**PowersOfZeroPOS** is a React Native mobile point-of-sale app for in-person selling. It brings together a fast checkout flow, product and inventory tools, local transaction history, backend connectivity, and Stripe Terminal support in one place.
 
-The app is structured to work well both as a realistic product prototype and as a strong foundation for production POS development.
+It started as a practical POS build, but it is also a solid base if you want to keep building it into something bigger.
+
+It is especially useful for people who like the flexibility of a **Stripe-powered backend** but want a **Square-style POS experience** on the front end.
 
 ## Highlights
 
 | Area | What it does |
 | --- | --- |
-| Checkout | Supports keypad-based custom amounts, product library browsing, favorites, notes, and sale review flows |
-| Transactions | Stores completed sales locally and shows detailed transaction history with payment metadata |
-| Refunds | Supports refund flows from transaction details, including Stripe Terminal-linked refund handling |
-| Inventory | Lets staff manage products, stock, and item visibility from within the app |
-| Backend | Includes backend URL and POS API key configuration with live connection testing |
-| Readers | Includes Stripe Terminal setup, reader discovery, location selection, connection, and diagnostics |
-| Persistence | Hydrates and saves POS state locally for a native app experience |
+| Checkout | Custom amounts, product browsing, favorites, notes, and easy sale review |
+| Transactions | Local transaction history with payment details and refund visibility |
+| Refunds | Refund flows from transaction details, including Stripe Terminal-related handling |
+| Inventory | Product editing, stock updates, and item management from inside the app |
+| Backend | Server URL and POS API key setup with built-in connection testing |
+| Readers | Stripe Terminal reader setup, discovery, location selection, and connection tools |
+| Persistence | Saves app state locally so the experience feels fast and native |
 
 ## Feature Set
 
-### Checkout experience
+### Checkout
 
 - Keypad mode for quick custom amount entry
 - Product library and favorites tabs
@@ -43,7 +45,7 @@ The app is structured to work well both as a realistic product prototype and as 
 - Review current sale before payment
 - Customer selection and cart state management
 
-### Operations and management
+### Management
 
 - Product creation and editing
 - Inventory adjustments
@@ -114,7 +116,7 @@ PowersOfZeroPOS/
 
 ### Prerequisites
 
-Make sure your machine is ready for React Native CLI development:
+To run the app locally, you will want the usual React Native CLI setup in place:
 
 - Node.js `>= 22.11.0`
 - npm
@@ -122,7 +124,7 @@ Make sure your machine is ready for React Native CLI development:
 - Android Studio for Android development
 - CocoaPods for iOS native dependencies
 
-Follow the official React Native environment setup guide if needed:
+If you need it, the official React Native environment setup guide is here:
 
 - https://reactnative.dev/docs/set-up-your-environment
 
@@ -161,32 +163,32 @@ npm run ios
 
 ## Backend Configuration
 
-The app includes a built-in **Backend / Server** settings screen where you can:
+The app has a built-in **Backend / Server** screen where you can:
 
 - Enter the backend base URL
 - Save a POS API key securely
 - Test connectivity before saving
-- Validate that the backend is a compatible `PowersOfZeroPOS` API
+- Make sure the backend matches the expected `PowersOfZeroPOS` API
 
-API server reference:
+If you want a backend to pair with this app, use the companion API server here:
 
 - https://github.com/sariyan-0/POZ-POS-api-server-
 
-The health check expects a successful response compatible with:
+The health check expects a successful response with:
 
 - service: `PowersOfZeroPOS`
 - apiVersion: `1`
 - status: `ok`
 
-Production backends should use `https`. `http` is only accepted for recognized local development hosts such as `localhost` and `10.0.2.2`.
+For production, the backend should use `https`. Plain `http` is only allowed for local development hosts like `localhost` and `10.0.2.2`.
 
-If you are setting up the full stack, use the companion API server repository above as the backend reference implementation for this app.
+If you are setting up the full stack, that repo is the best reference point for the server side.
 
 ## Stripe Terminal Support
 
-This app includes a dedicated Stripe Terminal provider and reader management workflow.
+This app already includes a dedicated Stripe Terminal provider and reader management flow.
 
-Supported capabilities in the current codebase include:
+Right now, the codebase supports:
 
 - Terminal initialization
 - Reader discovery
@@ -196,7 +198,7 @@ Supported capabilities in the current codebase include:
 - Payment collection and processing hooks
 - In-person refund processing support
 
-If you plan to use live Stripe Terminal flows, make sure your backend exposes the required token and payment endpoints and that your Stripe account, locations, and readers are configured correctly.
+If you want to use live Stripe Terminal flows, make sure your backend exposes the needed token and payment endpoints, and that your Stripe account, locations, and readers are all set up properly.
 
 ## Testing
 
@@ -212,12 +214,13 @@ Lint the project with:
 npm run lint
 ```
 
-## Why This Project Stands Out
+## Why This Exists
 
 - Clean React Native architecture with separate config, service, terminal, and state layers
-- Good foundation for extending into a full production POS system
-- Strong local-first workflow for testing app behavior before backend completion
-- Stripe Terminal support already considered at the product architecture level
+- Good starting point if you want to grow this into a fuller production POS
+- Local-first workflows make it easy to test and iterate before every backend piece is finished
+- Helpful for merchants or developers who want Stripe infrastructure with a Square-inspired POS UI
+- Built from a real need for more flexibility and ownership in the POS stack
 
 ## Roadmap Ideas
 
@@ -234,5 +237,7 @@ Add your preferred license here before publishing publicly on GitHub.
 ---
 
 <div align="center">
-Built for fast in-person selling, modern mobile workflows, and future-ready POS expansion.
+Built for fast in-person selling and a more flexible POS setup.
 </div>
+
+This project exists in part because Square's account management can be pretty strict. The goal here was to build an alternative for people who want more control over their setup, their backend, and the overall POS experience.
