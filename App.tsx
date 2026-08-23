@@ -1,45 +1,50 @@
-/**
- * Sample React Native App
- * https://github.com/facebook/react-native
- *
- * @format
- */
+import React from 'react';
+import { ActivityIndicator, StatusBar, View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { POSProvider, usePOS } from './src/context/POSProvider';
+import { AppNavigator } from './src/navigation/AppNavigator';
+import { AppStripeTerminalProvider } from './src/terminal/StripeTerminalProvider';
+import { useAppTheme } from './src/theme';
 
-import { NewAppScreen } from '@react-native/new-app-screen';
-import { StatusBar, StyleSheet, useColorScheme, View } from 'react-native';
-import {
-  SafeAreaProvider,
-  useSafeAreaInsets,
-} from 'react-native-safe-area-context';
+function AppRoot() {
+  const { isHydrated } = usePOS();
+  const theme = useAppTheme();
 
-function App() {
-  const isDarkMode = useColorScheme() === 'dark';
+  if (!isHydrated) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: theme.colors.background,
+        }}>
+        <StatusBar
+          barStyle={theme.isDark ? 'light-content' : 'dark-content'}
+        />
+        <ActivityIndicator color={theme.colors.accent} size="large" />
+      </View>
+    );
+  }
 
   return (
+    <>
+      <StatusBar
+        barStyle={theme.isDark ? 'light-content' : 'dark-content'}
+      />
+      <AppNavigator />
+    </>
+  );
+}
+
+export default function App() {
+  return (
     <SafeAreaProvider>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <AppContent />
+      <POSProvider>
+        <AppStripeTerminalProvider>
+          <AppRoot />
+        </AppStripeTerminalProvider>
+      </POSProvider>
     </SafeAreaProvider>
   );
 }
-
-function AppContent() {
-  const safeAreaInsets = useSafeAreaInsets();
-
-  return (
-    <View style={styles.container}>
-      <NewAppScreen
-        templateFileName="App.tsx"
-        safeAreaInsets={safeAreaInsets}
-      />
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-});
-
-export default App;

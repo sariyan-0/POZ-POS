@@ -1,3 +1,4 @@
+const path = require('path');
 const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
 
 /**
@@ -6,6 +7,24 @@ const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
  *
  * @type {import('@react-native/metro-config').MetroConfig}
  */
-const config = {};
+const assetRegistryShim = path.resolve(
+  __dirname,
+  'src/shims/reactNativeAssetsRegistry.js',
+);
+
+const config = {
+  resolver: {
+    resolveRequest: (context, moduleName, platform) => {
+      if (moduleName === '@react-native/assets-registry/registry') {
+        return {
+          type: 'sourceFile',
+          filePath: assetRegistryShim,
+        };
+      }
+
+      return context.resolveRequest(context, moduleName, platform);
+    },
+  },
+};
 
 module.exports = mergeConfig(getDefaultConfig(__dirname), config);

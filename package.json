@@ -10,10 +10,21 @@
     "test": "jest"
   },
   "dependencies": {
+    "@react-native-async-storage/async-storage": "^3.1.1",
+    "@react-native-vector-icons/material-design-icons": "^13.1.2",
+    "@react-native/new-app-screen": "0.87.0",
+    "@react-navigation/bottom-tabs": "^7.18.16",
+    "@react-navigation/native": "^7.3.16",
+    "@react-navigation/native-stack": "^7.18.8",
+    "@stripe/stripe-terminal-react-native": "^0.0.1-beta.32",
     "react": "19.2.3",
     "react-native": "0.87.0",
-    "@react-native/new-app-screen": "0.87.0",
-    "react-native-safe-area-context": "^5.5.2"
+    "react-native-gesture-handler": "^3.2.1",
+    "react-native-keychain": "^10.0.0",
+    "react-native-safe-area-context": "^5.5.2",
+    "react-native-screens": "^4.27.0",
+    "react-native-svg": "^15.15.5",
+    "react-svg-credit-card-payment-icons": "^6.0.4"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
