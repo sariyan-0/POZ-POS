@@ -138,7 +138,7 @@ export function CurrentSaleScreen() {
           ))}
 
           <View style={[styles.thinDivider, { backgroundColor: theme.colors.divider }]} />
-          <Pressable>
+          <Pressable onPress={() => navigation.navigate('Discounts')}>
             <Text style={[styles.discountLabel, { color: theme.colors.text }]}>
               Add discount
             </Text>
@@ -1049,6 +1049,61 @@ const styles = StyleSheet.create({
   },
   discountLabel: {
     fontSize: 18,
+    fontWeight: '700',
+  },
+  discountList: {
+    gap: 10,
+  },
+  discountOption: {
+    minHeight: 72,
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    justifyContent: 'center',
+  },
+  discountOptionTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  discountOptionMeta: {
+    marginTop: 4,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  pinDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 14,
+    marginTop: 6,
+  },
+  pinDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 999,
+    borderWidth: 1.5,
+  },
+  pinErrorText: {
+    minHeight: 20,
+    textAlign: 'center',
+    fontSize: 14,
+  },
+  pinKeypad: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  pinKeypadButton: {
+    width: 84,
+    height: 62,
+    borderRadius: 18,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pinKeypadLabel: {
+    fontSize: 24,
     fontWeight: '700',
   },
   chargeFooter: {

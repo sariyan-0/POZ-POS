@@ -1,1 +1,1 @@
-export { createEmptyProduct, usePOS } from '../context/POSProvider';
+export { createEmptyDiscount, createEmptyProduct, usePOS } from '../context/POSProvider';

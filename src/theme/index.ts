@@ -1,5 +1,6 @@
 import { DarkTheme, DefaultTheme, Theme } from '@react-navigation/native';
 import { useColorScheme } from 'react-native';
+import { usePOS } from '../hooks/usePOS';
 
 export interface AppTheme {
   isDark: boolean;
@@ -37,7 +38,15 @@ export interface AppTheme {
 }
 
 export function useAppTheme(): AppTheme {
-  const isDark = useColorScheme() === 'dark';
+  const systemColorScheme = useColorScheme();
+  const { state } = usePOS();
+  const appearanceMode = state.settings.appearanceMode;
+  const isDark =
+    appearanceMode === 'dark'
+      ? true
+      : appearanceMode === 'light'
+        ? false
+        : systemColorScheme === 'dark';
 
   const colors = isDark
     ? {

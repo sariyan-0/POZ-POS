@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -14,7 +15,6 @@ import {
   EmptyNotice,
   ListRow,
   PrimaryPillButton,
-  RailIconColumn,
   SearchRow,
   SegmentedTabs,
   Thumbnail,
@@ -25,6 +25,20 @@ import { useAppTheme } from '../theme';
 import { formatCurrency } from '../utils/format';
 
 type CheckoutTab = 'keypad' | 'library' | 'favorites';
+type LibrarySectionKey =
+  | 'items'
+  | 'discounts'
+  | 'services';
+
+const LIBRARY_SECTIONS: Array<{
+  key: LibrarySectionKey;
+  label: string;
+  icon: React.ComponentProps<typeof MaterialDesignIcons>['name'];
+}> = [
+  { key: 'items', label: 'Items', icon: 'archive-outline' },
+  { key: 'discounts', label: 'Discounts', icon: 'ticket-percent-outline' },
+  { key: 'services', label: 'Services', icon: 'calendar-blank-outline' },
+];
 
 function formatEntryAsCurrency(entryDigits: string): string {
   const cents = Number.parseInt(entryDigits || '0', 10) || 0;
@@ -42,6 +56,7 @@ export function CheckoutScreen() {
   const navigation = useRootNavigation();
   const {
     activeProducts,
+    activeDiscounts,
     favoriteProducts,
     saleItemCount,
     addProductToCart,
@@ -52,6 +67,8 @@ export function CheckoutScreen() {
   const [entryDigits, setEntryDigits] = useState('');
   const [note, setNote] = useState('');
   const [noteOpen, setNoteOpen] = useState(false);
+  const [librarySection, setLibrarySection] = useState<LibrarySectionKey>('items');
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
 
   const filteredProducts = useMemo(() => {
     const base = tab === 'favorites' ? favoriteProducts : activeProducts;
@@ -96,6 +113,11 @@ export function CheckoutScreen() {
     ),
   );
   const amountFontSize = Math.max(46, Math.min(66, width * 0.18, height * 0.075));
+  const floatingButtonBottom = insets.bottom + 10;
+  const floatingButtonHeight = 54;
+  const floatingButtonReserve = floatingButtonBottom + floatingButtonHeight + 20;
+  const visibleProducts = filteredProducts.slice(0, 40);
+  const isItemsSection = tab === 'favorites' || librarySection === 'items';
 
   function appendDigit(value: string) {
     setEntryDigits(current => `${current}${value}`.replace(/^0+(?=\d)/, ''));
@@ -127,6 +149,19 @@ export function CheckoutScreen() {
     }
   }
 
+  function handleCreateChoice(choice: 'item' | 'discount' | 'service') {
+    setCreateMenuOpen(false);
+
+    if (choice === 'item') {
+      navigation.navigate('ProductEditor');
+      return;
+    }
+
+    if (choice === 'discount') {
+      navigation.navigate('DiscountEditor');
+    }
+  }
+
   return (
     <View style={[styles.screen, { backgroundColor: theme.colors.background }]}>
       <CheckoutHeader />
@@ -148,6 +183,7 @@ export function CheckoutScreen() {
                 styles.keypadContent,
                 {
                   paddingTop: compactLayout ? 10 : 18,
+                  paddingBottom: floatingButtonReserve,
                 },
               ]}>
               <Text
@@ -244,84 +280,237 @@ export function CheckoutScreen() {
                   },
                 )}
               </View>
-
-              <PrimaryPillButton
-                label={formatReviewSaleLabel(reviewSaleItemCount)}
-                disabled={reviewSaleItemCount === 0}
-                onPress={reviewSale}
-                style={[
-                  styles.keypadReviewButton,
-                  { marginTop: compactLayout ? 10 : 16, marginBottom: insets.bottom + 8 },
-                ]}
-              />
             </View>
           ) : (
-            <View style={{ flex: 1, paddingBottom: insets.bottom + 14 }}>
+            <View style={{ flex: 1, paddingBottom: floatingButtonReserve }}>
               <SearchRow value={search} onChangeText={setSearch} />
-              <View style={styles.libraryWrap}>
-                <RailIconColumn />
-                <View style={styles.libraryList}>
-                  <ListRow label="Items" showChevron icon="archive-outline" />
-                  <ListRow label="Categories" showChevron icon="shape-outline" />
-                  <ListRow label="Discounts" showChevron icon="ticket-percent-outline" />
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.libraryScrollContent}>
+                <View
+                  style={[
+                    styles.libraryShell,
+                    {
+                      borderColor: theme.colors.divider,
+                    },
+                  ]}>
+                  <View style={[styles.libraryRail, { backgroundColor: theme.colors.rail }]}>
+                    {LIBRARY_SECTIONS.map(section => {
+                      const selected =
+                        tab === 'favorites'
+                          ? section.key === 'items'
+                          : librarySection === section.key;
+                      return (
+                        <Pressable
+                          key={section.key}
+                          onPress={() => setLibrarySection(section.key)}
+                          style={[
+                            styles.libraryRailIconWrap,
+                            selected
+                              ? {
+                                  backgroundColor: 'rgba(255,255,255,0.08)',
+                                  borderRadius: 12,
+                                }
+                              : null,
+                          ]}>
+                          <MaterialDesignIcons
+                            color={theme.colors.railText}
+                            name={section.icon}
+                            size={28}
+                          />
+                        </Pressable>
+                      );
+                    })}
+                  </View>
 
-                  {filteredProducts.map(product => (
-                    <ListRow
-                      key={product.id}
-                      label={product.name}
-                      rightLabel={formatCurrency(product.priceInCents, product.currency)}
-                      showChevron={false}
-                      compact
-                      thumbnail={<Thumbnail product={product} />}
-                      onPress={() => addProductToCart(product.id)}
-                    />
-                  ))}
+                  <View style={styles.libraryMain}>
+                    <View
+                      style={[
+                        styles.libraryCategorySection,
+                        {
+                          backgroundColor: theme.colors.surface,
+                          borderColor: theme.colors.divider,
+                        },
+                      ]}>
+                      {LIBRARY_SECTIONS.map(section => {
+                        const selected =
+                          tab === 'favorites'
+                            ? section.key === 'items'
+                            : librarySection === section.key;
 
-                  {tab === 'favorites' && !favoriteProducts.length ? (
-                    <EmptyNotice
-                      title="No favorites yet"
-                      body="Mark items as favorites when you create or edit them."
-                    />
-                  ) : null}
+                        return (
+                          <Pressable
+                            key={section.key}
+                            onPress={() => setLibrarySection(section.key)}
+                            style={[
+                              styles.libraryCategoryRow,
+                              {
+                                borderBottomColor: theme.colors.divider,
+                                backgroundColor: theme.colors.surface,
+                              },
+                            ]}>
+                            <Text
+                              style={[
+                                styles.libraryCategoryLabel,
+                                {
+                                  color: theme.colors.text,
+                                  fontWeight: selected ? '800' : '700',
+                                },
+                              ]}>
+                              {tab === 'favorites' && section.key === 'items'
+                                ? 'Favorites'
+                                : section.label}
+                            </Text>
+                            <MaterialDesignIcons
+                              color={theme.colors.textMuted}
+                              name="chevron-right"
+                              size={28}
+                            />
+                          </Pressable>
+                        );
+                      })}
+                    </View>
 
-                  {!activeProducts.length && tab === 'library' ? (
-                    <EmptyNotice
-                      title="No items yet"
-                      body="Create your first item to populate the library."
-                    />
-                  ) : null}
+                    <View
+                      style={[
+                        styles.libraryProductSection,
+                        {
+                          backgroundColor: theme.colors.surface,
+                          borderColor: theme.colors.divider,
+                        },
+                      ]}>
+                      {tab === 'library' && librarySection === 'discounts' ? (
+                        <>
+                          {activeDiscounts.map(discount => (
+                            <ListRow
+                              key={discount.id}
+                              label={discount.name}
+                              rightLabel={
+                                discount.type === 'percentage'
+                                  ? `${discount.amount}%`
+                                  : formatCurrency(discount.amount)
+                              }
+                              showChevron={false}
+                              compact
+                            />
+                          ))}
+                          {!activeDiscounts.length ? (
+                            <EmptyNotice
+                              title="No discounts yet"
+                              body="Create your first discount to start using discount shortcuts in checkout."
+                            />
+                          ) : null}
+                        </>
+                      ) : isItemsSection ? (
+                        <>
+                          {visibleProducts.map(product => (
+                            <ListRow
+                              key={product.id}
+                              label={product.name}
+                              rightLabel={formatCurrency(product.priceInCents, product.currency)}
+                              showChevron={false}
+                              compact
+                              thumbnail={<Thumbnail product={product} />}
+                              onPress={() => addProductToCart(product.id)}
+                            />
+                          ))}
 
-                  <ListRow
-                    label="Create a new item"
-                    showChevron={false}
-                    onPress={() => navigation.navigate('ProductEditor')}
-                    tone="muted"
-                  />
+                          {tab === 'favorites' && !favoriteProducts.length ? (
+                            <EmptyNotice
+                              title="No favorites yet"
+                              body="Mark items as favorites when you create or edit them."
+                            />
+                          ) : null}
+
+                          {!activeProducts.length && tab === 'library' ? (
+                            <EmptyNotice
+                              title="No items yet"
+                              body="Create your first item to populate the library."
+                            />
+                          ) : null}
+                        </>
+                      ) : (
+                        <View style={styles.libraryPlaceholder} />
+                      )}
+                    </View>
+                  </View>
                 </View>
-              </View>
+
+                <Pressable
+                  onPress={() => setCreateMenuOpen(true)}
+                  style={[
+                    styles.createItemCard,
+                    {
+                      backgroundColor: theme.colors.surfaceMuted,
+                      borderColor: theme.colors.border,
+                    },
+                  ]}>
+                  <Text style={[styles.createItemTitle, { color: theme.colors.text }]}>
+                    Create a new item
+                  </Text>
+                  <Text style={[styles.createItemBody, { color: theme.colors.textMuted }]}>
+                    Add products, set prices, and decide what should appear in checkout.
+                  </Text>
+                </Pressable>
+              </ScrollView>
             </View>
           )}
         </View>
       </View>
 
-      {tab !== 'keypad' ? (
-        <View
-          style={[
-            styles.reviewSaleFooter,
-            {
-              paddingBottom: insets.bottom + 10,
-              backgroundColor: theme.colors.background,
-            },
-          ]}>
-          <View style={[styles.innerWrap, contentMaxWidth ? { maxWidth: contentMaxWidth } : null]}>
-            <PrimaryPillButton
-              label={formatReviewSaleLabel(reviewSaleItemCount)}
-              disabled={reviewSaleItemCount === 0}
-              onPress={reviewSale}
-            />
+      {createMenuOpen ? (
+        <View style={[styles.createMenuBackdrop, { backgroundColor: theme.colors.overlay }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setCreateMenuOpen(false)} />
+          <View
+            style={[
+              styles.createMenuCard,
+              {
+                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.border,
+              },
+            ]}>
+            {[
+              { key: 'item', label: 'Create an item' },
+              { key: 'discount', label: 'Create a discount' },
+              { key: 'service', label: 'Create a service' },
+            ].map((option, index, array) => (
+              <Pressable
+                key={option.key}
+                onPress={() =>
+                  handleCreateChoice(option.key as 'item' | 'discount' | 'service')
+                }
+                style={[
+                  styles.createMenuRow,
+                  index < array.length - 1
+                    ? { borderBottomWidth: 1, borderBottomColor: theme.colors.divider }
+                    : null,
+                ]}>
+                <Text style={[styles.createMenuLabel, { color: theme.colors.text }]}>
+                  {option.label}
+                </Text>
+              </Pressable>
+            ))}
           </View>
         </View>
       ) : null}
+
+      <View
+        pointerEvents="box-none"
+        style={[
+          styles.reviewSaleFooter,
+          {
+            bottom: floatingButtonBottom,
+          },
+        ]}>
+        <View style={[styles.innerWrap, contentMaxWidth ? { maxWidth: contentMaxWidth } : null]}>
+          <PrimaryPillButton
+            label={formatReviewSaleLabel(reviewSaleItemCount)}
+            disabled={reviewSaleItemCount === 0}
+            onPress={reviewSale}
+            style={styles.keypadReviewButton}
+          />
+        </View>
+      </View>
     </View>
   );
 }
@@ -389,17 +578,98 @@ const styles = StyleSheet.create({
     fontWeight: '400',
   },
   reviewSaleFooter: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
     paddingHorizontal: 16,
-    paddingTop: 10,
   },
   keypadReviewButton: {
     minHeight: 54,
   },
-  libraryWrap: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
+  libraryScrollContent: {
+    paddingTop: 0,
+    paddingBottom: 10,
+    gap: 14,
   },
-  libraryList: {
+  libraryShell: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+  },
+  libraryRail: {
+    width: 58,
+    alignItems: 'center',
+  },
+  libraryRailIconWrap: {
+    minHeight: 68,
+    width: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  libraryMain: {
     flex: 1,
+  },
+  libraryCategorySection: {
+    borderBottomWidth: 6,
+  },
+  libraryCategoryRow: {
+    minHeight: 68,
+    paddingHorizontal: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1,
+  },
+  libraryCategoryLabel: {
+    fontSize: 18,
+    letterSpacing: -0.4,
+  },
+  libraryProductSection: {
+    borderTopWidth: 1,
+  },
+  createItemCard: {
+    marginHorizontal: 16,
+    borderWidth: 1,
+    borderRadius: 0,
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    gap: 6,
+  },
+  createItemTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  createItemBody: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  libraryPlaceholder: {
+    minHeight: 24,
+  },
+  createMenuBackdrop: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+  },
+  createMenuCard: {
+    width: '100%',
+    maxWidth: 460,
+    borderRadius: 18,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  createMenuRow: {
+    minHeight: 74,
+    justifyContent: 'center',
+    paddingHorizontal: 22,
+  },
+  createMenuLabel: {
+    fontSize: 17,
+    fontWeight: '700',
   },
 });

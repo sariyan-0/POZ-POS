@@ -1,15 +1,34 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { AppScreen, ListRow } from '../components/POSUI';
+import { usePOS } from '../hooks/usePOS';
 import { useRootNavigation } from '../navigation/AppNavigator';
 import { useAppTheme } from '../theme';
 
 export function MoreScreen() {
   const navigation = useRootNavigation();
   const theme = useAppTheme();
+  const { currentStaff, lockSession, state } = usePOS();
+  const staffName = currentStaff?.name?.trim() || 'there';
+  const businessName = state.settings.business.businessName?.trim() || 'POZ';
 
   return (
-    <AppScreen title="More" subtitle="Simple access to management, readers, and configuration tools.">
+    <AppScreen
+      title={`Welcome back, ${staffName}`}
+      subtitle={businessName}
+      contentStyle={styles.contentStyle}>
+      <Pressable
+        onPress={lockSession}
+        style={[
+          styles.logoutButton,
+          {
+            backgroundColor: theme.colors.surfaceStrong,
+          },
+        ]}>
+        <Text style={[styles.logoutButtonLabel, { color: theme.colors.text }]}>
+          Log out {currentStaff?.name || ''}
+        </Text>
+      </Pressable>
       <View style={{ backgroundColor: theme.colors.surface }}>
         <ListRow label="Items" icon="archive-outline" onPress={() => navigation.navigate('Items')} />
         <ListRow
@@ -47,3 +66,20 @@ export function MoreScreen() {
     </AppScreen>
   );
 }
+
+const styles = StyleSheet.create({
+  contentStyle: {
+    gap: 18,
+  },
+  logoutButton: {
+    minHeight: 66,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  logoutButtonLabel: {
+    fontSize: 16,
+    fontWeight: '800',
+  },
+});

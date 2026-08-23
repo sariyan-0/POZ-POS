@@ -46,6 +46,7 @@ type ApprovedPaymentSummary = {
   brand?: string;
   last4?: string;
   readerLabel?: string;
+  sourceLabel?: string;
 };
 
 type IconName = React.ComponentProps<typeof MaterialDesignIcons>['name'];
@@ -420,7 +421,9 @@ export function MockPaymentScreen() {
         processorReference: processed.paymentId,
       });
       setTransactionId(transaction?.id ?? processed.transactionReference);
-      setApprovedPayment(null);
+      setApprovedPayment({
+        sourceLabel: method === 'cash' ? 'Cash payment' : 'Mock payment',
+      });
       setPhase('approved');
     } catch (error) {
       if (attemptRef.current === token) {
@@ -571,9 +574,13 @@ export function MockPaymentScreen() {
             ]}
           />
           <Text style={[styles.readerInstructionText, { color: theme.colors.text }]}>
-            {readerWaitSeconds > 45
-              ? 'Still working. Do not start another sale.'
-              : 'Follow the reader prompts.'}
+            {isReaderPayment
+              ? readerWaitSeconds > 45
+                ? 'Still working. Do not start another sale.'
+                : 'Follow the reader prompts.'
+              : selectedMethod === 'cash'
+                ? 'Recording cash payment...'
+                : 'Processing payment...'}
           </Text>
           <Pressable
             onPress={cancelPayment}
@@ -597,6 +604,7 @@ export function MockPaymentScreen() {
           brand={approvedPayment?.brand}
           last4={approvedPayment?.last4}
           readerLabel={approvedPayment?.readerLabel}
+          sourceLabel={approvedPayment?.sourceLabel}
           transactionId={transactionId}
           onDone={() => navigation.popToTop()}
         />
@@ -831,6 +839,7 @@ function ApprovedPaymentCard({
   brand,
   last4,
   readerLabel,
+  sourceLabel,
   transactionId,
   onDone,
 }: {
@@ -838,6 +847,7 @@ function ApprovedPaymentCard({
   brand?: string;
   last4?: string;
   readerLabel?: string;
+  sourceLabel?: string;
   transactionId: string;
   onDone: () => void;
 }) {
@@ -941,7 +951,10 @@ function ApprovedPaymentCard({
           },
         ]}>
         <DetailRow label="Status" value="Completed" />
-        <DetailRow label="Source" value={readerLabel || 'Stripe Terminal'} />
+        <DetailRow
+          label="Source"
+          value={sourceLabel || readerLabel || 'Stripe Terminal'}
+        />
         <DetailRow label="Reference" value={transactionId} />
       </View>
 

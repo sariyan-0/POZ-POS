@@ -50,6 +50,8 @@ function TransactionRow({
   onPress: () => void;
 }) {
   const theme = useAppTheme();
+  const isRefunded =
+    transaction.status === 'refunded' || transaction.status === 'partially_refunded';
 
   return (
     <Pressable onPress={onPress}>
@@ -73,9 +75,25 @@ function TransactionRow({
           </View>
         </View>
         <View style={styles.transactionRight}>
-          <Text style={[styles.transactionAmount, { color: theme.colors.text }]}>
-            {formatCurrency(transaction.total, transaction.currency)}
-          </Text>
+          <View style={styles.transactionAmountWrap}>
+            <Text
+              style={[
+                styles.transactionAmount,
+                { color: theme.colors.text },
+                isRefunded ? styles.transactionAmountRefunded : null,
+              ]}>
+              {formatCurrency(transaction.total, transaction.currency)}
+            </Text>
+            {isRefunded ? (
+              <View
+                pointerEvents="none"
+                style={[
+                  styles.transactionAmountStrike,
+                  { backgroundColor: theme.colors.text },
+                ]}
+              />
+            ) : null}
+          </View>
           <MaterialDesignIcons
             color={theme.colors.textMuted}
             name="chevron-right"
@@ -91,36 +109,103 @@ function TransactionCardLogo({ transaction }: { transaction: Transaction }) {
   const theme = useAppTheme();
   const cardBrand = getTransactionCardBrand(transaction);
 
-  if (!cardBrand && !transaction.paymentDetails?.cardPresentType) {
-    return null;
+  if (cardBrand || transaction.paymentDetails?.cardPresentType) {
+    return (
+      <View
+        style={[
+          styles.cardLogoBadge,
+          {
+            backgroundColor: theme.colors.surfaceMuted,
+            borderColor: theme.colors.border,
+          },
+        ]}>
+        <CardNetworkLogo
+          brand={cardBrand}
+          fallbackColor={theme.colors.textMuted}
+          size="small"
+        />
+      </View>
+    );
   }
 
-  return (
-    <View
-      style={[
-        styles.cardLogoBadge,
-        {
-          backgroundColor: theme.colors.surfaceMuted,
-          borderColor: theme.colors.border,
-        },
-      ]}>
-      <CardNetworkLogo
-        brand={cardBrand}
-        fallbackColor={theme.colors.textMuted}
-        size="small"
-      />
-    </View>
-  );
+  if (transaction.paymentMethod === 'cash') {
+    return (
+      <View
+        style={[
+          styles.cardLogoBadge,
+          {
+            backgroundColor: theme.colors.surfaceMuted,
+            borderColor: theme.colors.border,
+          },
+        ]}>
+        <MaterialDesignIcons
+          color={theme.colors.textMuted}
+          name="cash-100"
+          size={22}
+        />
+      </View>
+    );
+  }
+
+  if (transaction.paymentMethod === 'tap_to_pay') {
+    return (
+      <View
+        style={[
+          styles.cardLogoBadge,
+          {
+            backgroundColor: theme.colors.surfaceMuted,
+            borderColor: theme.colors.border,
+          },
+        ]}>
+        <MaterialDesignIcons
+          color={theme.colors.textMuted}
+          name="cellphone-nfc"
+          size={20}
+        />
+      </View>
+    );
+  }
+
+  if (transaction.paymentMethod === 'card_reader') {
+    return (
+      <View
+        style={[
+          styles.cardLogoBadge,
+          {
+            backgroundColor: theme.colors.surfaceMuted,
+            borderColor: theme.colors.border,
+          },
+        ]}>
+        <MaterialDesignIcons
+          color={theme.colors.textMuted}
+          name="credit-card-outline"
+          size={20}
+        />
+      </View>
+    );
+  }
+
+  return null;
 }
 
 function getTransactionPaymentLabel(transaction: Transaction): string {
+  if (transaction.status === 'refunded') {
+    return 'Refunded';
+  }
+
+  if (transaction.status === 'partially_refunded') {
+    return 'Partially refunded';
+  }
+
   const paymentDetails = transaction.paymentDetails;
 
   if (paymentDetails?.last4) {
     return paymentDetails.last4;
   }
 
-  return transaction.paymentMethod.replaceAll('_', ' ');
+  return transaction.paymentMethod === 'cash'
+    ? 'Cash'
+    : transaction.paymentMethod.replaceAll('_', ' ');
 }
 
 function getTransactionCardBrand(transaction: Transaction): string | undefined {
@@ -164,10 +249,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
+  transactionAmountWrap: {
+    position: 'relative',
+    justifyContent: 'center',
+  },
   transactionAmount: {
     fontSize: 20,
     fontWeight: '900',
     letterSpacing: -0.4,
+  },
+  transactionAmountRefunded: {
+    opacity: 0.92,
+  },
+  transactionAmountStrike: {
+    position: 'absolute',
+    left: -1,
+    right: -1,
+    height: 2.5,
+    borderRadius: 999,
+    top: '28%',
   },
   cardLogoBadge: {
     width: 48,

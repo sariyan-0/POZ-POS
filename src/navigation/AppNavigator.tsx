@@ -16,6 +16,8 @@ import { TransactionsScreen } from '../screens/TransactionsScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { MockPaymentScreen } from '../screens/MockPaymentScreen';
 import { ProductEditorScreen } from '../screens/ProductEditorScreen';
+import { DiscountEditorScreen } from '../screens/DiscountEditorScreen';
+import { DiscountsScreen } from '../screens/DiscountsScreen';
 import { TransactionDetailScreen } from '../screens/TransactionDetailScreen';
 import { ProductsScreen } from '../screens/ProductsScreen';
 import { MoreScreen } from '../screens/MoreScreen';
@@ -24,15 +26,19 @@ import { OrdersScreen } from '../screens/OrdersScreen';
 import { CurrentSaleScreen } from '../screens/CurrentSaleScreen';
 import { MoreSectionScreen } from '../screens/MoreSectionScreen';
 import { BackendSettingsScreen } from '../screens/BackendSettingsScreen';
+import { SecuritySettingsScreen } from '../screens/SecuritySettingsScreen';
 
 export type RootStackParamList = {
   MainTabs: undefined;
   CurrentSale: undefined;
   MockPayment: undefined;
   ProductEditor: { productId?: string } | undefined;
+  DiscountEditor: { discountId?: string } | undefined;
+  Discounts: undefined;
   Items: undefined;
   Inventory: undefined;
   Settings: undefined;
+  SecuritySettings: undefined;
   BackendSettings: undefined;
   MoreSection: { section: 'hardware' | 'taxes' | 'appearance' | 'developer' };
   TransactionDetail: { transactionId: string };
@@ -168,6 +174,18 @@ export function AppNavigator() {
             title: route.params?.productId ? 'Edit Product' : 'Add Product',
           })}
         />
+        <Stack.Screen
+          name="DiscountEditor"
+          component={DiscountEditorScreen}
+          options={({ route }) => ({
+            title: route.params?.discountId ? 'Edit Discount' : 'Create Discount',
+          })}
+        />
+        <Stack.Screen
+          name="Discounts"
+          component={DiscountsScreen}
+          options={{ headerShown: false }}
+        />
         <Stack.Screen name="Items" component={ProductsScreen} options={{ title: 'Items' }} />
         <Stack.Screen
           name="Inventory"
@@ -178,6 +196,11 @@ export function AppNavigator() {
           name="Settings"
           component={SettingsScreen}
           options={{ title: 'Settings' }}
+        />
+        <Stack.Screen
+          name="SecuritySettings"
+          component={SecuritySettingsScreen}
+          options={{ title: 'Security' }}
         />
         <Stack.Screen
           name="BackendSettings"

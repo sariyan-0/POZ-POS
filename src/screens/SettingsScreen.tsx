@@ -1,17 +1,15 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
-import { AppScreen } from '../components/POSUI';
+import { AppScreen, ListRow } from '../components/POSUI';
 import { usePOS } from '../hooks/usePOS';
+import { useRootNavigation } from '../navigation/AppNavigator';
 import { useAppTheme } from '../theme';
-import { percentToLabel } from '../utils/format';
 
 export function SettingsScreen() {
-  const { state, updateBusinessName, updateTaxRate } = usePOS();
+  const { state, currentStaff, updateBusinessName } = usePOS();
+  const navigation = useRootNavigation();
   const theme = useAppTheme();
   const [businessName, setBusinessName] = useState(state.settings.business.businessName);
-  const [taxRate, setTaxRate] = useState(
-    state.settings.business.defaultTaxRate.toString(),
-  );
 
   return (
     <AppScreen
@@ -40,26 +38,18 @@ export function SettingsScreen() {
       </View>
 
       <View style={[styles.block, { backgroundColor: theme.colors.surface }]}>
-        <Text style={[styles.label, { color: theme.colors.textMuted }]}>Default tax percentage</Text>
-        <TextInput
-          value={taxRate}
-          onChangeText={setTaxRate}
-          keyboardType="numeric"
-          style={[
-            styles.input,
-            {
-              color: theme.colors.text,
-              borderColor: theme.colors.border,
-              backgroundColor: theme.colors.surfaceMuted,
-            },
-          ]}
-        />
+        <Text style={[styles.label, { color: theme.colors.textMuted }]}>Register</Text>
         <Text style={[styles.helper, { color: theme.colors.textMuted }]}>
-          Current default: {percentToLabel(state.settings.business.defaultTaxRate)}
+          Signed in as {currentStaff?.name || 'Unknown staff'}.
         </Text>
-        <Text style={[styles.action, { color: theme.colors.text }]} onPress={() => updateTaxRate(Number.parseFloat(taxRate || '0') || 0)}>
-          Save tax rate
-        </Text>
+      </View>
+
+      <View style={{ backgroundColor: theme.colors.surface, borderRadius: 18, overflow: 'hidden' }}>
+        <ListRow
+          label="Security"
+          icon="shield-lock-outline"
+          onPress={() => navigation.navigate('SecuritySettings')}
+        />
       </View>
     </AppScreen>
   );

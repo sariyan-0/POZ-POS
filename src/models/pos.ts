@@ -17,18 +17,36 @@ export interface Product {
   imagePlaceholder?: string;
 }
 
-export type CartItemType = 'product' | 'custom';
+export type DiscountType = 'fixed' | 'percentage';
+
+export interface Discount {
+  id: string;
+  name: string;
+  type: DiscountType;
+  amount: number;
+  requirePasscode: boolean;
+  applyAfterTaxes: boolean;
+  active: boolean;
+}
+
+export type CartItemType = 'product' | 'custom' | 'discount';
 
 export interface CartItem {
   id: string;
   type: CartItemType;
   productId?: string;
+  discountId?: string;
   title: string;
   quantity: number;
   unitPriceInCents: number;
   taxable: boolean;
   note?: string;
   sku?: string;
+  metadata?: {
+    discountType?: DiscountType;
+    applyAfterTaxes?: boolean;
+    authorizedByStaffId?: string;
+  };
 }
 
 export type PaymentMethod = 'card_reader' | 'tap_to_pay' | 'cash';
@@ -63,6 +81,15 @@ export interface Customer {
   note?: string;
   stripeCustomerId?: string;
   syncStatus?: 'local' | 'synced' | 'failed';
+}
+
+export interface StaffMember {
+  id: string;
+  name: string;
+  pinHash: string;
+  pinSalt: string;
+  role: 'owner' | 'manager' | 'cashier';
+  active: boolean;
 }
 
 export interface TransactionCustomerSnapshot {
@@ -126,17 +153,23 @@ export interface HardwareSettings {
   readerBatteryLevel: number;
 }
 
+export type AppearanceMode = 'system' | 'light' | 'dark';
+
 export interface AppSettings {
   business: BusinessSettings;
   hardware: HardwareSettings;
+  appearanceMode: AppearanceMode;
   mockPaymentMode: true;
 }
 
 export interface POSState {
   products: Product[];
+  discounts: Discount[];
   cart: CartItem[];
   currentCustomerId?: string;
   customers: Customer[];
+  staffMembers: StaffMember[];
+  currentStaffId?: string;
   transactions: Transaction[];
   settings: AppSettings;
 }
