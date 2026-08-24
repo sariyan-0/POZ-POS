@@ -8,18 +8,14 @@ import { AppearanceMode } from '../models/pos';
 import { DeveloperTerminalPanel } from './DeveloperTerminalPanel';
 import { useAppStripeTerminal } from '../terminal/StripeTerminalProvider';
 import { useAppTheme } from '../theme';
-import { percentToLabel } from '../utils/format';
 
 type MoreSectionRoute = RouteProp<RootStackParamList, 'MoreSection'>;
 
 export function MoreSectionScreen() {
   const { params } = useRoute<MoreSectionRoute>();
-  const { state, updateTaxRate, updateAppearanceMode, upsertTaxDefinition } = usePOS();
+  const { state, updateAppearanceMode, upsertTaxDefinition, deleteTaxDefinition } = usePOS();
   const theme = useAppTheme();
   const terminal = useAppStripeTerminal();
-  const [taxRate, setTaxRate] = useState(
-    state.settings.business.defaultTaxRate.toString(),
-  );
   const [taxName, setTaxName] = useState('');
   const [taxValue, setTaxValue] = useState('');
 
@@ -37,54 +33,7 @@ export function MoreSectionScreen() {
     return (
       <AppScreen
         title="Taxes"
-        subtitle="Configure the default tax behavior used during checkout.">
-        <View
-          style={{
-            backgroundColor: theme.colors.surface,
-            borderRadius: 18,
-            padding: 18,
-            gap: 10,
-          }}>
-          <Text style={{ color: theme.colors.textMuted, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8 }}>
-            Default tax percentage
-          </Text>
-          <TextInput
-            value={taxRate}
-            onChangeText={setTaxRate}
-            keyboardType="numeric"
-            style={{
-              minHeight: 52,
-              borderWidth: 1,
-              borderRadius: 12,
-              paddingHorizontal: 14,
-              fontSize: 16,
-              color: theme.colors.text,
-              borderColor: theme.colors.border,
-              backgroundColor: theme.colors.surfaceMuted,
-            }}
-          />
-          <Text style={{ color: theme.colors.textMuted, fontSize: 13 }}>
-            Current default: {percentToLabel(state.settings.business.defaultTaxRate)}
-          </Text>
-          <Text style={{ color: theme.colors.text, lineHeight: 22 }}>
-            Applied to taxable items and custom amounts during checkout.
-          </Text>
-          <Pressable
-            onPress={() => updateTaxRate(Number.parseFloat(taxRate || '0') || 0)}
-            style={{
-              minHeight: 50,
-              borderRadius: 14,
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginTop: 6,
-              paddingHorizontal: 14,
-              backgroundColor: theme.colors.accent,
-            }}>
-            <Text style={{ color: theme.colors.accentText, fontSize: 15, fontWeight: '800' }}>
-              Save tax rate
-            </Text>
-          </Pressable>
-        </View>
+        subtitle="Create and manage the tax types used during checkout.">
         <View
           style={{
             backgroundColor: theme.colors.surface,
@@ -95,27 +44,56 @@ export function MoreSectionScreen() {
           <Text style={{ color: theme.colors.text, fontSize: 20, fontWeight: '800' }}>
             Tax types
           </Text>
+          <Text style={{ color: theme.colors.textMuted, lineHeight: 20 }}>
+            Taxable items use the tax types you create here. There is no separate default tax to manage.
+          </Text>
           {state.settings.business.taxDefinitions.map(tax => (
             <View
               key={tax.id}
               style={{
-                minHeight: 68,
+                minHeight: 76,
                 borderWidth: 1,
                 borderRadius: 16,
                 borderColor: theme.colors.border,
                 backgroundColor: theme.colors.surfaceMuted,
                 paddingHorizontal: 14,
                 paddingVertical: 12,
-                justifyContent: 'center',
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
               }}>
-              <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '700' }}>
-                {tax.name}
-              </Text>
-              <Text style={{ color: theme.colors.textMuted, marginTop: 4 }}>
-                {tax.rate}% {tax.enabled ? 'enabled' : 'disabled'}
-              </Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '700' }}>
+                  {tax.name}
+                </Text>
+                <Text style={{ color: theme.colors.textMuted, marginTop: 4 }}>
+                  {tax.rate}% {tax.enabled ? 'enabled' : 'disabled'}
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => deleteTaxDefinition(tax.id)}
+                style={{
+                  minHeight: 40,
+                  minWidth: 72,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: theme.colors.danger,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingHorizontal: 12,
+                }}>
+                <Text style={{ color: theme.colors.danger, fontSize: 14, fontWeight: '800' }}>
+                  Delete
+                </Text>
+              </Pressable>
             </View>
           ))}
+          {!state.settings.business.taxDefinitions.length ? (
+            <Text style={{ color: theme.colors.textMuted, lineHeight: 20 }}>
+              No tax types yet. Add one below when you are ready.
+            </Text>
+          ) : null}
           <TextInput
             value={taxName}
             onChangeText={setTaxName}

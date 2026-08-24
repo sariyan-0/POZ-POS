@@ -75,6 +75,7 @@ export function ProductEditorScreen() {
   const [optionDisplayName, setOptionDisplayName] = useState('');
   const [optionValues, setOptionValues] = useState(['']);
   const [editingOptionSetId, setEditingOptionSetId] = useState<string | null>(null);
+  const scrollViewRef = useRef<any>(null);
   const descriptionEditorRef = useRef<RichEditor>(null);
 
   const saveDisabled = !product.name.trim();
@@ -337,8 +338,10 @@ export function ProductEditorScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.surface }}>
       <ScrollView
+        ref={scrollViewRef}
         style={{ flex: 1, backgroundColor: theme.colors.surface }}
-        contentContainerStyle={styles.content}>
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled">
         <View style={[styles.topBar, { borderBottomColor: theme.colors.border }]}>
           <Pressable
             onPress={() => navigation.goBack()}
@@ -350,14 +353,25 @@ export function ProductEditorScreen() {
           </Text>
           <Pressable
             onPress={saveProduct}
+            disabled={saveDisabled}
             style={[
               styles.saveButton,
               {
-                backgroundColor: theme.colors.surfaceMuted,
+                backgroundColor: saveDisabled
+                  ? theme.colors.surfaceMuted
+                  : theme.colors.accent,
                 opacity: saveDisabled ? 0.55 : 1,
               },
             ]}>
-            <Text style={[styles.saveLabel, { color: theme.colors.textMuted }]}>Save</Text>
+            <Text
+              style={[
+                styles.saveLabel,
+                {
+                  color: saveDisabled ? theme.colors.textMuted : theme.colors.accentText,
+                },
+              ]}>
+              Save
+            </Text>
           </Pressable>
         </View>
 
@@ -424,10 +438,15 @@ export function ProductEditorScreen() {
         <View style={styles.descriptionEditor}>
           <RichEditor
             ref={descriptionEditorRef}
-            useContainer={false}
             initialHeight={178}
             initialContentHTML={toRichTextHtml(product.description)}
             placeholder="Description"
+            onCursorPosition={offsetY => {
+              scrollViewRef.current?.scrollTo({
+                y: Math.max(0, offsetY - 180),
+                animated: true,
+              });
+            }}
             editorStyle={{
               backgroundColor: theme.colors.surface,
               color: theme.colors.text,
@@ -498,7 +517,7 @@ export function ProductEditorScreen() {
               ? 'No taxes available'
               : selectedTaxNames.length
                 ? selectedTaxNames.join(', ')
-                : 'Default tax applied'}
+                : 'Uses store tax settings'}
           </Text>
         </View>
         <MaterialDesignIcons color={theme.colors.textMuted} name="chevron-right" size={28} />

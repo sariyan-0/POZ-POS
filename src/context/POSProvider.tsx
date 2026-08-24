@@ -83,6 +83,7 @@ type POSContextValue = {
   refundTransaction: (transactionId: string, refund: RefundRecord) => void;
   updateTaxRate: (taxRate: number) => void;
   upsertTaxDefinition: (tax: TaxDefinition) => void;
+  deleteTaxDefinition: (taxId: string) => void;
   updateBusinessName: (name: string) => void;
   updateAppearanceMode: (mode: AppearanceMode) => void;
   unlockWithPin: (pin: string, staffId?: string) => StaffMember | null;
@@ -138,6 +139,7 @@ type POSAction =
   | { type: 'refundTransaction'; payload: { transactionId: string; refund: RefundRecord } }
   | { type: 'updateSettings'; payload: AppSettings }
   | { type: 'upsertTaxDefinition'; payload: TaxDefinition }
+  | { type: 'deleteTaxDefinition'; payload: { taxId: string } }
   | { type: 'unlockWithPin'; payload: { staffId: string } }
   | { type: 'lockSession' }
   | {
@@ -770,6 +772,28 @@ function posReducer(state: POSState, action: POSAction): POSState {
         },
       };
     }
+    case 'deleteTaxDefinition': {
+      const taxDefinitions = state.settings.business.taxDefinitions.filter(
+        tax => tax.id !== action.payload.taxId,
+      );
+      return {
+        ...state,
+        products: state.products.map(product => ({
+          ...product,
+          taxIds: (product.taxIds ?? []).filter(id => id !== action.payload.taxId),
+        })),
+        settings: {
+          ...state.settings,
+          business: {
+            ...state.settings.business,
+            taxDefinitions,
+            defaultTaxRate: taxDefinitions
+              .filter(tax => tax.enabled)
+              .reduce((sum, tax) => sum + tax.rate, 0),
+          },
+        },
+      };
+    }
     case 'unlockWithPin':
       return {
         ...state,
@@ -1016,6 +1040,8 @@ export function POSProvider({ children }: PropsWithChildren) {
         }),
       upsertTaxDefinition: tax =>
         dispatch({ type: 'upsertTaxDefinition', payload: tax }),
+      deleteTaxDefinition: taxId =>
+        dispatch({ type: 'deleteTaxDefinition', payload: { taxId } }),
       updateBusinessName: name =>
         dispatch({
           type: 'updateSettings',
