@@ -96,7 +96,10 @@ export function CurrentSaleScreen() {
           <MaterialDesignIcons color={theme.colors.textMuted} name="chevron-right" size={28} />
         </Pressable>
 
-        <View style={styles.itemsArea}>
+        <ScrollView
+          style={styles.itemsArea}
+          contentContainerStyle={styles.itemsAreaContent}
+          showsVerticalScrollIndicator={false}>
           {state.cart.map(item => (
             <View key={item.id} style={styles.saleItemBlock}>
               <View style={styles.saleLine}>
@@ -138,12 +141,12 @@ export function CurrentSaleScreen() {
           ))}
 
           <View style={[styles.thinDivider, { backgroundColor: theme.colors.divider }]} />
-          <Pressable onPress={() => navigation.navigate('Discounts')}>
+          <Pressable onPress={() => navigation.navigate('CheckoutDiscounts')}>
             <Text style={[styles.discountLabel, { color: theme.colors.text }]}>
               Add discount
             </Text>
           </Pressable>
-        </View>
+        </ScrollView>
 
         <View
           style={[
@@ -990,8 +993,11 @@ const styles = StyleSheet.create({
   },
   itemsArea: {
     flex: 1,
+  },
+  itemsAreaContent: {
     paddingHorizontal: 18,
     paddingTop: 26,
+    paddingBottom: 24,
   },
   saleItemBlock: {
     paddingBottom: 18,

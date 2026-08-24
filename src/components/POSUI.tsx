@@ -16,6 +16,7 @@ import { useNavigation } from '@react-navigation/native';
 import { Product } from '../models/pos';
 import { useAppStripeTerminal } from '../terminal/StripeTerminalProvider';
 import { useAppTheme } from '../theme';
+import { getProductTileInitials, getReadableTileTextColor } from '../utils/productTile';
 
 type IconName = React.ComponentProps<typeof MaterialDesignIcons>['name'];
 
@@ -391,14 +392,26 @@ export function Thumbnail({ product }: { product: Product }) {
     return <Image source={{ uri: product.imageUri }} style={styles.thumbnailImage} />;
   }
 
+  const fallbackColor = product.tileColor?.trim() || theme.colors.surfaceStrong;
+
   return (
     <View
       style={[
         styles.thumbnailFallback,
-        { backgroundColor: theme.colors.surfaceStrong },
+        { backgroundColor: fallbackColor },
       ]}>
-      <Text style={[styles.thumbnailText, { color: theme.colors.text }]}>
-        {product.imagePlaceholder || 'PO'}
+      <Text
+        style={[
+          styles.thumbnailText,
+          {
+            color: getReadableTileTextColor(
+              fallbackColor,
+              theme.colors.text,
+              theme.colors.surface,
+            ),
+          },
+        ]}>
+        {getProductTileInitials(product)}
       </Text>
     </View>
   );

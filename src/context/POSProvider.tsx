@@ -14,9 +14,12 @@ import {
   Customer,
   Discount,
   DiscountType,
+  ModifierSet,
   PaymentMethod,
   POSState,
   Product,
+  ProductOptionSet,
+  TaxDefinition,
   RefundRecord,
   StaffMember,
   StripePaymentDetails,
@@ -42,6 +45,7 @@ type POSContextValue = {
   activeProducts: Product[];
   favoriteProducts: Product[];
   activeDiscounts: Discount[];
+  modifierSets: ModifierSet[];
   currentStaff?: StaffMember;
   isStaffAuthenticated: boolean;
   saleItemCount: number;
@@ -49,7 +53,16 @@ type POSContextValue = {
   tax: number;
   total: number;
   selectedCustomer?: Customer;
-  addProductToCart: (productId: string) => void;
+  addProductToCart: (
+    productId: string,
+    input?: {
+      quantity?: number;
+      title?: string;
+      unitPriceInCents?: number;
+      note?: string;
+      metadata?: CartItem['metadata'];
+    },
+  ) => void;
   addCustomAmountToCart: (amountInCents: number, note?: string) => void;
   addDiscountToCart: (
     discountId: string,
@@ -59,6 +72,7 @@ type POSContextValue = {
   removeCartItem: (itemId: string) => void;
   clearCart: () => void;
   upsertProduct: (product: Product) => void;
+  upsertModifierSet: (modifierSet: ModifierSet) => void;
   deactivateProduct: (productId: string) => void;
   adjustInventory: (productId: string, delta: number) => void;
   upsertDiscount: (discount: Discount) => void;
@@ -68,6 +82,7 @@ type POSContextValue = {
   createApprovedTransaction: (input: CreateTransactionInput) => Transaction | null;
   refundTransaction: (transactionId: string, refund: RefundRecord) => void;
   updateTaxRate: (taxRate: number) => void;
+  upsertTaxDefinition: (tax: TaxDefinition) => void;
   updateBusinessName: (name: string) => void;
   updateAppearanceMode: (mode: AppearanceMode) => void;
   unlockWithPin: (pin: string, staffId?: string) => StaffMember | null;
@@ -87,17 +102,29 @@ type POSContextValue = {
     name: string;
     role: StaffMember['role'];
   }) => { ok: true } | { ok: false; message: string };
+  deleteStaffProfile: (staffId: string) => { ok: true } | { ok: false; message: string };
 };
 
 type POSAction =
   | { type: 'hydrate'; payload: POSState }
-  | { type: 'addProductToCart'; payload: { productId: string } }
+  | {
+      type: 'addProductToCart';
+      payload: {
+        productId: string;
+        quantity?: number;
+        title?: string;
+        unitPriceInCents?: number;
+        note?: string;
+        metadata?: CartItem['metadata'];
+      };
+    }
   | { type: 'addCustomAmountToCart'; payload: { amountInCents: number; note?: string } }
   | { type: 'addDiscountToCart'; payload: { item: CartItem } }
   | { type: 'updateCartItemQuantity'; payload: { itemId: string; quantity: number } }
   | { type: 'removeCartItem'; payload: { itemId: string } }
   | { type: 'clearCart' }
   | { type: 'upsertProduct'; payload: Product }
+  | { type: 'upsertModifierSet'; payload: ModifierSet }
   | { type: 'upsertDiscount'; payload: Discount }
   | { type: 'deactivateProduct'; payload: { productId: string } }
   | { type: 'adjustInventory'; payload: { productId: string; delta: number } }
@@ -110,15 +137,21 @@ type POSAction =
   | { type: 'completeSale'; payload: Transaction }
   | { type: 'refundTransaction'; payload: { transactionId: string; refund: RefundRecord } }
   | { type: 'updateSettings'; payload: AppSettings }
+  | { type: 'upsertTaxDefinition'; payload: TaxDefinition }
   | { type: 'unlockWithPin'; payload: { staffId: string } }
   | { type: 'lockSession' }
   | {
       type: 'updateStaffPin';
       payload: { staffId: string; pinHash: string; pinSalt: string };
     }
-  | { type: 'upsertStaffProfile'; payload: StaffMember };
+  | { type: 'upsertStaffProfile'; payload: StaffMember }
+  | { type: 'deactivateStaffProfile'; payload: { staffId: string } };
 
 const POSContext = createContext<POSContextValue | undefined>(undefined);
+
+function hasConfiguredPin(staffMember: Pick<StaffMember, 'pinHash' | 'pinSalt'>) {
+  return !!staffMember.pinHash?.trim() && !!staffMember.pinSalt?.trim();
+}
 
 function normalizeProduct(product: Product): Product {
   return {
@@ -126,8 +159,40 @@ function normalizeProduct(product: Product): Product {
     category: product.category || 'Items',
     isFavorite: product.isFavorite ?? false,
     trackInventory: product.trackInventory ?? true,
+    taxIds: Array.isArray(product.taxIds) ? product.taxIds : [],
+    optionSets: Array.isArray(product.optionSets)
+      ? product.optionSets.map(optionSet => normalizeProductOptionSet(optionSet))
+      : [],
+    modifierSetIds: Array.isArray(product.modifierSetIds) ? product.modifierSetIds : [],
     imageUri: product.imageUri ?? '',
     imagePlaceholder: product.imagePlaceholder ?? 'PO',
+    tileColor: product.tileColor ?? '',
+    tileLabel: product.tileLabel ?? '',
+  };
+}
+
+function normalizeProductOptionSet(optionSet: ProductOptionSet): ProductOptionSet {
+  return {
+    ...optionSet,
+    name: optionSet.name?.trim() || '',
+    displayName: optionSet.displayName?.trim() || optionSet.name?.trim() || '',
+    values: Array.isArray(optionSet.values)
+      ? optionSet.values
+          .map(value => ({
+            ...value,
+            name: value.name?.trim() || '',
+          }))
+          .filter(value => value.name)
+      : [],
+  };
+}
+
+function normalizeTaxDefinition(tax: TaxDefinition): TaxDefinition {
+  return {
+    ...tax,
+    name: tax.name?.trim() || 'Tax',
+    rate: Math.max(0, Number.isFinite(tax.rate) ? tax.rate : 0),
+    enabled: tax.enabled ?? true,
   };
 }
 
@@ -140,6 +205,28 @@ function normalizeDiscount(discount: Discount): Discount {
     requirePasscode: discount.requirePasscode ?? false,
     applyAfterTaxes: discount.applyAfterTaxes ?? false,
     active: discount.active ?? true,
+  };
+}
+
+function normalizeModifierSet(modifierSet: ModifierSet): ModifierSet {
+  return {
+    ...modifierSet,
+    name: modifierSet.name?.trim() || 'Modifier set',
+    itemIds: Array.isArray(modifierSet.itemIds) ? modifierSet.itemIds : [],
+    modifiers: Array.isArray(modifierSet.modifiers)
+      ? modifierSet.modifiers
+          .map(modifier => ({
+            ...modifier,
+            name: modifier.name?.trim() || '',
+            priceAdjustmentInCents: Math.max(
+              0,
+              Number.isFinite(modifier.priceAdjustmentInCents)
+                ? modifier.priceAdjustmentInCents
+                : 0,
+            ),
+          }))
+          .filter(modifier => modifier.name)
+      : [],
   };
 }
 
@@ -172,7 +259,10 @@ function normalizeStaffMember(staffMember: StaffMember): StaffMember {
     };
   }
 
-  const migratedCredentials = createPinCredentials(entry.pin ?? '1234');
+  const legacyPin = typeof entry.pin === 'string' ? entry.pin.trim() : '';
+  const migratedCredentials = legacyPin
+    ? createPinCredentials(legacyPin)
+    : { pinHash: '', pinSalt: '' };
   return {
     ...entry,
     name: entry.name.trim(),
@@ -183,29 +273,71 @@ function normalizeStaffMember(staffMember: StaffMember): StaffMember {
   };
 }
 
+function clearLegacyDefaultOwnerPin(staffMember: StaffMember): StaffMember {
+  const isSeededOwner =
+    staffMember.id === 'staff-owner' &&
+    staffMember.role === 'owner' &&
+    staffMember.name.trim().toLowerCase() === 'store owner';
+
+  if (!isSeededOwner || !hasConfiguredPin(staffMember)) {
+    return staffMember;
+  }
+
+  if (
+    verifyPin({
+      pin: '1234',
+      pinHash: staffMember.pinHash,
+      pinSalt: staffMember.pinSalt,
+    })
+  ) {
+    return {
+      ...staffMember,
+      pinHash: '',
+      pinSalt: '',
+    };
+  }
+
+  return staffMember;
+}
+
 function normalizeState(state: POSState): POSState {
   const rawCart = (state.cart ?? []) as Array<
     CartItem | { productId?: string; quantity?: number }
   >;
 
+  const normalizedStaffMembers = ((state.staffMembers ?? []) as StaffMember[]).length
+    ? ((state.staffMembers ?? []) as StaffMember[])
+        .map(staffMember => normalizeStaffMember(staffMember))
+        .map(staffMember => clearLegacyDefaultOwnerPin(staffMember))
+    : initialPOSState.staffMembers
+        .map(staffMember => normalizeStaffMember(staffMember))
+        .map(staffMember => clearLegacyDefaultOwnerPin(staffMember));
+  const hasAnyConfiguredPins = normalizedStaffMembers.some(
+    staffMember => staffMember.active && hasConfiguredPin(staffMember),
+  );
+  const fallbackStaffId =
+    normalizedStaffMembers.find(staffMember => staffMember.active && staffMember.role === 'owner')
+      ?.id ?? normalizedStaffMembers.find(staffMember => staffMember.active)?.id;
+
   return {
     ...state,
     products: (state.products ?? []).map(product => normalizeProduct(product as Product)),
+    modifierSets: ((state.modifierSets ?? []) as ModifierSet[]).map(modifierSet =>
+      normalizeModifierSet(modifierSet),
+    ),
     discounts: ((state.discounts ?? []) as Discount[]).map(discount =>
       normalizeDiscount(discount),
     ),
     customers: ((state.customers ?? []) as Customer[]).map(customer =>
       normalizeCustomer(customer),
     ),
-    staffMembers: ((state.staffMembers ?? []) as StaffMember[]).length
-      ? ((state.staffMembers ?? []) as StaffMember[]).map(staffMember =>
-          normalizeStaffMember(staffMember),
-        )
-      : initialPOSState.staffMembers.map(staffMember =>
-          normalizeStaffMember(staffMember),
-        ),
+    staffMembers: normalizedStaffMembers,
     currentStaffId:
-      typeof state.currentStaffId === 'string' ? state.currentStaffId : undefined,
+      typeof state.currentStaffId === 'string' && state.currentStaffId
+        ? state.currentStaffId
+        : hasAnyConfiguredPins
+          ? undefined
+          : fallbackStaffId,
     currentCustomerId:
       typeof state.currentCustomerId === 'string'
         ? state.currentCustomerId
@@ -254,6 +386,9 @@ function normalizeState(state: POSState): POSState {
       business: {
         ...initialPOSState.settings.business,
         ...(state.settings?.business ?? {}),
+        taxDefinitions: Array.isArray(state.settings?.business?.taxDefinitions)
+          ? state.settings.business.taxDefinitions.map(tax => normalizeTaxDefinition(tax))
+          : initialPOSState.settings.business.taxDefinitions,
       },
       hardware: {
         ...initialPOSState.settings.hardware,
@@ -274,16 +409,30 @@ function roundCurrency(value: number): number {
 }
 
 function calculateCartTotals(state: POSState) {
-  const subtotal = state.cart.reduce(
-    (sum, item) => sum + item.unitPriceInCents * item.quantity,
-    0,
-  );
-  const taxRate = state.settings.business.defaultTaxRate / 100;
-  const taxableSubtotal = state.cart.reduce((sum, item) => {
-    return item.taxable ? sum + item.unitPriceInCents * item.quantity : sum;
-  }, 0);
+  const subtotal = state.cart.reduce((sum, item) => sum + item.unitPriceInCents * item.quantity, 0);
+  const enabledTaxes = state.settings.business.taxDefinitions.filter(tax => tax.enabled);
+  const defaultTaxRate =
+    enabledTaxes.reduce((sum, tax) => sum + tax.rate, 0) || state.settings.business.defaultTaxRate;
 
-  const tax = roundCurrency(taxableSubtotal * taxRate);
+  const tax = state.cart.reduce((sum, item) => {
+    if (!item.taxable) {
+      return sum;
+    }
+
+    const itemAmount = item.unitPriceInCents * item.quantity;
+
+    if (item.type === 'product' && item.productId) {
+      const product = state.products.find(entry => entry.id === item.productId);
+      const applicableRate = product?.taxIds?.length
+        ? enabledTaxes
+            .filter(tax => product.taxIds?.includes(tax.id))
+            .reduce((rateSum, taxDef) => rateSum + taxDef.rate, 0)
+        : defaultTaxRate;
+      return sum + roundCurrency(itemAmount * (applicableRate / 100));
+    }
+
+    return sum + roundCurrency(itemAmount * (defaultTaxRate / 100));
+  }, 0);
   return { subtotal, tax, total: subtotal + tax };
 }
 
@@ -324,13 +473,32 @@ function posReducer(state: POSState, action: POSAction): POSState {
       if (!product || !product.active) {
         return state;
       }
-      if (product.trackInventory && product.inventory <= 0) {
+      if (product.trackInventory && product.inventory < 0) {
         return state;
       }
 
-      const existing = state.cart.find(
-        item => item.type === 'product' && item.productId === product.id,
-      );
+      const quantity = Math.max(1, action.payload.quantity ?? 1);
+      const unitPriceInCents = action.payload.unitPriceInCents ?? product.priceInCents;
+      const title = action.payload.title?.trim() || product.name;
+      const note = action.payload.note?.trim() || undefined;
+      const metadata = action.payload.metadata;
+      const hasCustomizations =
+        !!note ||
+        unitPriceInCents !== product.priceInCents ||
+        title !== product.name ||
+        !!metadata?.selectedOptions?.length ||
+        !!metadata?.selectedModifiers?.length;
+
+      const existing = hasCustomizations
+        ? undefined
+        : state.cart.find(
+            item =>
+              item.type === 'product' &&
+              item.productId === product.id &&
+              !item.note &&
+              !item.metadata?.selectedOptions?.length &&
+              !item.metadata?.selectedModifiers?.length,
+          );
       const maxQuantity = product.trackInventory ? Math.max(product.inventory, 1) : 999;
 
       if (existing) {
@@ -338,7 +506,7 @@ function posReducer(state: POSState, action: POSAction): POSState {
           ...state,
           cart: state.cart.map(item =>
             item.id === existing.id
-              ? { ...item, quantity: Math.min(item.quantity + 1, maxQuantity) }
+              ? { ...item, quantity: Math.min(item.quantity + quantity, maxQuantity) }
               : item,
           ),
         };
@@ -352,11 +520,13 @@ function posReducer(state: POSState, action: POSAction): POSState {
             id: createId('cart'),
             type: 'product',
             productId: product.id,
-            title: product.name,
-            quantity: 1,
-            unitPriceInCents: product.priceInCents,
+            title,
+            quantity: Math.min(quantity, maxQuantity),
+            unitPriceInCents,
             taxable: product.taxable,
             sku: product.sku,
+            note,
+            metadata,
           },
         ],
       };
@@ -427,6 +597,18 @@ function posReducer(state: POSState, action: POSAction): POSState {
               product.id === normalized.id ? normalized : product,
             )
           : [...state.products, normalized],
+      };
+    }
+    case 'upsertModifierSet': {
+      const normalized = normalizeModifierSet(action.payload);
+      const exists = state.modifierSets.some(modifierSet => modifierSet.id === normalized.id);
+      return {
+        ...state,
+        modifierSets: exists
+          ? state.modifierSets.map(modifierSet =>
+              modifierSet.id === normalized.id ? normalized : modifierSet,
+            )
+          : [...state.modifierSets, normalized],
       };
     }
     case 'upsertDiscount': {
@@ -566,6 +748,28 @@ function posReducer(state: POSState, action: POSAction): POSState {
     }
     case 'updateSettings':
       return { ...state, settings: action.payload };
+    case 'upsertTaxDefinition': {
+      const normalized = normalizeTaxDefinition(action.payload);
+      const existing = state.settings.business.taxDefinitions.some(tax => tax.id === normalized.id);
+      const taxDefinitions = existing
+        ? state.settings.business.taxDefinitions.map(tax =>
+            tax.id === normalized.id ? normalized : tax,
+          )
+        : [...state.settings.business.taxDefinitions, normalized];
+      return {
+        ...state,
+        settings: {
+          ...state.settings,
+          business: {
+            ...state.settings.business,
+            taxDefinitions,
+            defaultTaxRate: taxDefinitions
+              .filter(tax => tax.enabled)
+              .reduce((sum, tax) => sum + tax.rate, 0),
+          },
+        },
+      };
+    }
     case 'unlockWithPin':
       return {
         ...state,
@@ -602,6 +806,17 @@ function posReducer(state: POSState, action: POSAction): POSState {
           : [...state.staffMembers, action.payload],
       };
     }
+    case 'deactivateStaffProfile':
+      return {
+        ...state,
+        staffMembers: state.staffMembers.map(staffMember =>
+          staffMember.id === action.payload.staffId
+            ? { ...staffMember, active: false }
+            : staffMember,
+        ),
+        currentStaffId:
+          state.currentStaffId === action.payload.staffId ? undefined : state.currentStaffId,
+      };
     default:
       return state;
   }
@@ -642,10 +857,20 @@ export function POSProvider({ children }: PropsWithChildren) {
     [state.currentCustomerId, state.customers],
   );
   const currentStaff = useMemo(
-    () =>
-      state.currentStaffId
-        ? state.staffMembers.find(staffMember => staffMember.id === state.currentStaffId)
-        : undefined,
+    () => {
+      if (state.currentStaffId) {
+        return state.staffMembers.find(staffMember => staffMember.id === state.currentStaffId);
+      }
+
+      const activeStaffWithoutPins = state.staffMembers.filter(
+        staffMember => staffMember.active && !hasConfiguredPin(staffMember),
+      );
+
+      return (
+        activeStaffWithoutPins.find(staffMember => staffMember.role === 'owner') ??
+        activeStaffWithoutPins[0]
+      );
+    },
     [state.currentStaffId, state.staffMembers],
   );
 
@@ -654,6 +879,7 @@ export function POSProvider({ children }: PropsWithChildren) {
       state,
       isHydrated,
       activeProducts: state.products.filter(product => product.active),
+      modifierSets: state.modifierSets,
       activeDiscounts: state.discounts.filter(discount => discount.active),
       favoriteProducts: state.products.filter(
         product => product.active && product.isFavorite,
@@ -665,8 +891,8 @@ export function POSProvider({ children }: PropsWithChildren) {
       tax,
       total,
       selectedCustomer,
-      addProductToCart: productId =>
-        dispatch({ type: 'addProductToCart', payload: { productId } }),
+      addProductToCart: (productId, input) =>
+        dispatch({ type: 'addProductToCart', payload: { productId, ...input } }),
       addCustomAmountToCart: (amountInCents, note) =>
         dispatch({
           type: 'addCustomAmountToCart',
@@ -716,6 +942,8 @@ export function POSProvider({ children }: PropsWithChildren) {
         dispatch({ type: 'removeCartItem', payload: { itemId } }),
       clearCart: () => dispatch({ type: 'clearCart' }),
       upsertProduct: product => dispatch({ type: 'upsertProduct', payload: product }),
+      upsertModifierSet: modifierSet =>
+        dispatch({ type: 'upsertModifierSet', payload: modifierSet }),
       deactivateProduct: productId =>
         dispatch({ type: 'deactivateProduct', payload: { productId } }),
       adjustInventory: (productId, delta) =>
@@ -786,6 +1014,8 @@ export function POSProvider({ children }: PropsWithChildren) {
             },
           },
         }),
+      upsertTaxDefinition: tax =>
+        dispatch({ type: 'upsertTaxDefinition', payload: tax }),
       updateBusinessName: name =>
         dispatch({
           type: 'updateSettings',
@@ -808,6 +1038,9 @@ export function POSProvider({ children }: PropsWithChildren) {
       unlockWithPin: (pin, staffId) => {
         const matchedStaff = state.staffMembers.find(staffMember => {
           if (!staffMember.active) {
+            return false;
+          }
+          if (!hasConfiguredPin(staffMember)) {
             return false;
           }
           if (staffId && staffMember.id !== staffId) {
@@ -833,6 +1066,9 @@ export function POSProvider({ children }: PropsWithChildren) {
           if (!staffMember.active || staffMember.role === 'cashier') {
             return false;
           }
+          if (!hasConfiguredPin(staffMember)) {
+            return false;
+          }
           return verifyPin({
             pin,
             pinHash: staffMember.pinHash,
@@ -849,8 +1085,10 @@ export function POSProvider({ children }: PropsWithChildren) {
 
         const normalizedCurrentPin = currentPin.trim();
         const normalizedNextPin = nextPin.trim();
+        const requiresCurrentPin = hasConfiguredPin(currentStaff);
 
         if (
+          requiresCurrentPin &&
           !verifyPin({
             pin: normalizedCurrentPin,
             pinHash: currentStaff.pinHash,
@@ -943,6 +1181,32 @@ export function POSProvider({ children }: PropsWithChildren) {
         });
         return { ok: true };
       },
+      deleteStaffProfile: staffId => {
+        const target = state.staffMembers.find(staffMember => staffMember.id === staffId);
+
+        if (!target || !target.active) {
+          return { ok: false, message: 'Staff profile not found.' };
+        }
+
+        if (currentStaff?.id === staffId) {
+          return { ok: false, message: 'You cannot delete the profile that is signed in.' };
+        }
+
+        if (target.role === 'owner') {
+          const activeOwners = state.staffMembers.filter(
+            staffMember => staffMember.active && staffMember.role === 'owner',
+          );
+          if (activeOwners.length <= 1) {
+            return { ok: false, message: 'You must keep at least one owner profile.' };
+          }
+        }
+
+        dispatch({
+          type: 'deactivateStaffProfile',
+          payload: { staffId },
+        });
+        return { ok: true };
+      },
     };
   }, [
     currentStaff,
@@ -979,9 +1243,14 @@ export function createEmptyProduct(overrides?: Partial<Product>): Product {
     taxable: true,
     active: true,
     isFavorite: false,
-    trackInventory: true,
+    trackInventory: false,
+    taxIds: [],
+    optionSets: [],
+    modifierSetIds: [],
     imageUri: '',
     imagePlaceholder: 'PO',
+    tileColor: '',
+    tileLabel: '',
     ...overrides,
   };
 }

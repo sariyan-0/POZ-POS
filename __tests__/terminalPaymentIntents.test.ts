@@ -14,6 +14,26 @@ import {
   BackendNotConfiguredError,
 } from '../src/config/backend';
 
+const sampleSale = {
+  subtotalInCents: 100,
+  taxInCents: 13,
+  totalInCents: 113,
+  currency: 'CAD',
+  itemCount: 1,
+  items: [
+    {
+      localCartItemId: 'cart_1',
+      type: 'product' as const,
+      productId: 'prod_1',
+      name: 'Test item',
+      quantity: 1,
+      unitPriceInCents: 100,
+      lineTotalInCents: 100,
+      taxable: true,
+    },
+  ],
+};
+
 describe('terminalPaymentIntents', () => {
   afterEach(() => {
     jest.restoreAllMocks();
@@ -59,6 +79,7 @@ describe('terminalPaymentIntents', () => {
         amount: 100,
         currency: 'CAD',
         idempotencyKey: 'sale-attempt-1',
+        sale: sampleSale,
       }),
     ).resolves.toEqual({
       id: 'pi_nested_123',
@@ -73,6 +94,10 @@ describe('terminalPaymentIntents', () => {
         amount: 100,
         currency: 'cad',
         idempotencyKey: 'sale-attempt-1',
+        sale: expect.objectContaining({
+          totalInCents: 113,
+          currency: 'cad',
+        }),
       }),
     );
   });
@@ -92,6 +117,7 @@ describe('terminalPaymentIntents', () => {
         amount: 250,
         currency: 'cad',
         idempotencyKey: 'sale-attempt-2',
+        sale: { ...sampleSale, subtotalInCents: 250, totalInCents: 250, taxInCents: 0, currency: 'cad' },
       }),
     ).resolves.toEqual({
       id: 'pi_flat_123',
@@ -120,6 +146,7 @@ describe('terminalPaymentIntents', () => {
         amount: 100,
         currency: 'CAD',
         idempotencyKey: 'sale-attempt-retry',
+        sale: sampleSale,
       }),
     ).resolves.toEqual({
       id: 'pi_retry_123',
@@ -155,6 +182,7 @@ describe('terminalPaymentIntents', () => {
         amount: 100,
         currency: 'CAD',
         idempotencyKey: 'sale-attempt-no-retry',
+        sale: sampleSale,
       }),
     ).rejects.toBeInstanceOf(BackendNotConfiguredError);
 
@@ -174,6 +202,7 @@ describe('terminalPaymentIntents', () => {
         amount: 100,
         currency: 'CAD',
         idempotencyKey: 'sale-attempt-bad-payload',
+        sale: sampleSale,
       }),
     ).rejects.toThrow('Invalid Stripe Terminal PaymentIntent response');
   });

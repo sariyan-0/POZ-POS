@@ -1,5 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Animated,
+  Image,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -9,7 +12,7 @@ import {
   View,
 } from 'react-native';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons/static';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   CheckoutHeader,
   EmptyNotice,
@@ -20,9 +23,11 @@ import {
   Thumbnail,
 } from '../components/POSUI';
 import { usePOS } from '../hooks/usePOS';
+import { CartItem, Discount, Product } from '../models/pos';
 import { useRootNavigation } from '../navigation/AppNavigator';
 import { useAppTheme } from '../theme';
 import { formatCurrency } from '../utils/format';
+import { getProductTileInitials, getReadableTileTextColor } from '../utils/productTile';
 
 type CheckoutTab = 'keypad' | 'library' | 'favorites';
 type LibrarySectionKey =
@@ -55,12 +60,16 @@ export function CheckoutScreen() {
   const { width, height } = useWindowDimensions();
   const navigation = useRootNavigation();
   const {
+    state,
     activeProducts,
     activeDiscounts,
     favoriteProducts,
+    currentStaff,
     saleItemCount,
     addProductToCart,
     addCustomAmountToCart,
+    addDiscountToCart,
+    authorizeManagerPin,
   } = usePOS();
   const [tab, setTab] = useState<CheckoutTab>('keypad');
   const [search, setSearch] = useState('');
@@ -69,6 +78,16 @@ export function CheckoutScreen() {
   const [noteOpen, setNoteOpen] = useState(false);
   const [librarySection, setLibrarySection] = useState<LibrarySectionKey>('items');
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const [customizingProduct, setCustomizingProduct] = useState<Product | null>(null);
+  const [customizationNote, setCustomizationNote] = useState('');
+  const [customizationQuantity, setCustomizationQuantity] = useState(1);
+  const [selectedOptionValueIds, setSelectedOptionValueIds] = useState<Record<string, string>>({});
+  const [selectedModifierIds, setSelectedModifierIds] = useState<string[]>([]);
+  const [restrictedDiscount, setRestrictedDiscount] = useState<Discount | null>(null);
+  const [showDiscountAuth, setShowDiscountAuth] = useState(false);
+  const [managerPin, setManagerPin] = useState('');
+  const [discountPinError, setDiscountPinError] = useState('');
+  const shake = useState(() => new Animated.Value(0))[0];
 
   const filteredProducts = useMemo(() => {
     const base = tab === 'favorites' ? favoriteProducts : activeProducts;
@@ -118,6 +137,57 @@ export function CheckoutScreen() {
   const floatingButtonReserve = floatingButtonBottom + floatingButtonHeight + 20;
   const visibleProducts = filteredProducts.slice(0, 40);
   const isItemsSection = tab === 'favorites' || librarySection === 'items';
+  const favoriteGridProducts = useMemo(() => favoriteProducts.slice(0, 6), [favoriteProducts]);
+  const customizationModifierSets = useMemo(
+    () =>
+      customizingProduct
+        ? state.modifierSets.filter(modifierSet =>
+            customizingProduct.modifierSetIds?.includes(modifierSet.id),
+          )
+        : [],
+    [customizingProduct, state.modifierSets],
+  );
+  const customizationHasOptions = !!customizingProduct?.optionSets?.length;
+  const selectedCustomizationOptions = useMemo(() => {
+    if (!customizingProduct?.optionSets?.length) {
+      return [];
+    }
+
+    return customizingProduct.optionSets
+      .map(optionSet => {
+        const valueId = selectedOptionValueIds[optionSet.id];
+        const value = optionSet.values.find(entry => entry.id === valueId);
+        return value
+          ? {
+              optionSetId: optionSet.id,
+              optionSetName: optionSet.displayName || optionSet.name,
+              valueId: value.id,
+              valueName: value.name,
+            }
+          : null;
+      })
+      .filter(Boolean) as NonNullable<CartItemMetadata['selectedOptions']>[number][];
+  }, [customizingProduct, selectedOptionValueIds]);
+  const selectedCustomizationModifiers = useMemo(() => {
+    return customizationModifierSets.flatMap(modifierSet =>
+      modifierSet.modifiers
+        .filter(modifier => selectedModifierIds.includes(modifier.id))
+        .map(modifier => ({
+          modifierSetId: modifierSet.id,
+          modifierSetName: modifierSet.name,
+          modifierId: modifier.id,
+          modifierName: modifier.name,
+          priceAdjustmentInCents: modifier.priceAdjustmentInCents,
+        })),
+    );
+  }, [customizationModifierSets, selectedModifierIds]);
+  const customizationExtraInCents = selectedCustomizationModifiers.reduce(
+    (sum, modifier) => sum + modifier.priceAdjustmentInCents,
+    0,
+  );
+  const customizationCanSubmit =
+    !customizationHasOptions ||
+    (customizingProduct?.optionSets ?? []).every(optionSet => !!selectedOptionValueIds[optionSet.id]);
 
   function appendDigit(value: string) {
     setEntryDigits(current => `${current}${value}`.replace(/^0+(?=\d)/, ''));
@@ -160,6 +230,134 @@ export function CheckoutScreen() {
     if (choice === 'discount') {
       navigation.navigate('DiscountEditor');
     }
+  }
+
+  function openProductCustomizer(product: Product) {
+    setCustomizingProduct(product);
+    setCustomizationNote('');
+    setCustomizationQuantity(1);
+    setSelectedOptionValueIds({});
+    setSelectedModifierIds([]);
+  }
+
+  function closeProductCustomizer() {
+    setCustomizingProduct(null);
+    setCustomizationNote('');
+    setCustomizationQuantity(1);
+    setSelectedOptionValueIds({});
+    setSelectedModifierIds([]);
+  }
+
+  function handleProductPress(product: Product) {
+    if (product.optionSets?.length || product.modifierSetIds?.length) {
+      openProductCustomizer(product);
+      return;
+    }
+
+    addProductToCart(product.id);
+  }
+
+  function toggleModifier(modifierId: string) {
+    setSelectedModifierIds(current =>
+      current.includes(modifierId)
+        ? current.filter(id => id !== modifierId)
+        : [...current, modifierId],
+    );
+  }
+
+  function buildCustomizationNote() {
+    const lines: string[] = [];
+
+    selectedCustomizationOptions.forEach(selection => {
+      lines.push(`${selection.optionSetName}: ${selection.valueName}`);
+    });
+
+    if (selectedCustomizationModifiers.length) {
+      lines.push(
+        `Modifiers: ${selectedCustomizationModifiers.map(modifier => modifier.modifierName).join(', ')}`,
+      );
+    }
+
+    if (customizationNote.trim()) {
+      lines.push(customizationNote.trim());
+    }
+
+    return lines.join('\n').trim() || undefined;
+  }
+
+  function submitCustomizedProduct() {
+    if (!customizingProduct || !customizationCanSubmit) {
+      return;
+    }
+
+    addProductToCart(customizingProduct.id, {
+      quantity: customizationQuantity,
+      unitPriceInCents: customizingProduct.priceInCents + customizationExtraInCents,
+      note: buildCustomizationNote(),
+      metadata: {
+        selectedOptions: selectedCustomizationOptions,
+        selectedModifiers: selectedCustomizationModifiers,
+      },
+    });
+    closeProductCustomizer();
+  }
+
+  function closeRestrictedDiscountFlow() {
+    setRestrictedDiscount(null);
+    setShowDiscountAuth(false);
+    setManagerPin('');
+    setDiscountPinError('');
+  }
+
+  function finishApplyDiscount(discount: Discount, authorizedByStaffId?: string) {
+    const result = addDiscountToCart(discount.id, authorizedByStaffId);
+    if (result.ok) {
+      closeRestrictedDiscountFlow();
+    }
+  }
+
+  function tryManagerUnlock(candidatePin: string) {
+    const matchedStaff = authorizeManagerPin(candidatePin);
+    if (!matchedStaff || !restrictedDiscount) {
+      setManagerPin('');
+      setDiscountPinError('Wrong PIN.');
+      Animated.sequence([
+        Animated.timing(shake, { toValue: 10, duration: 45, useNativeDriver: true }),
+        Animated.timing(shake, { toValue: -8, duration: 45, useNativeDriver: true }),
+        Animated.timing(shake, { toValue: 6, duration: 45, useNativeDriver: true }),
+        Animated.timing(shake, { toValue: -4, duration: 45, useNativeDriver: true }),
+        Animated.timing(shake, { toValue: 0, duration: 45, useNativeDriver: true }),
+      ]).start();
+      return;
+    }
+
+    finishApplyDiscount(restrictedDiscount, matchedStaff.id);
+  }
+
+  function appendManagerPin(value: string) {
+    setDiscountPinError('');
+    setManagerPin(current => {
+      if (current.length >= 4) {
+        return current;
+      }
+      const nextPin = `${current}${value}`;
+      if (nextPin.length === 4) {
+        setTimeout(() => tryManagerUnlock(nextPin), 0);
+      }
+      return nextPin;
+    });
+  }
+
+  function handleDiscountPress(discount: Discount) {
+    if (discount.requirePasscode && currentStaff?.role === 'cashier') {
+      setRestrictedDiscount(discount);
+      setShowDiscountAuth(false);
+      setManagerPin('');
+      setDiscountPinError('');
+      return;
+    }
+
+    finishApplyDiscount(discount);
   }
 
   return (
@@ -281,6 +479,75 @@ export function CheckoutScreen() {
                 )}
               </View>
             </View>
+          ) : tab === 'favorites' ? (
+            <View style={{ flex: 1, paddingBottom: floatingButtonReserve }}>
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.favoritesScrollContent}>
+                <View style={styles.favoritesGrid}>
+                  {favoriteGridProducts.map(product => {
+                    const fallbackColor = product.tileColor?.trim() || theme.colors.surfaceStrong;
+                    const fallbackTextColor = getReadableTileTextColor(
+                      fallbackColor,
+                      theme.colors.text,
+                      theme.colors.surface,
+                    );
+
+                    return (
+                      <Pressable
+                        key={product.id}
+                        onPress={() => handleProductPress(product)}
+                        style={[
+                          styles.favoriteTile,
+                          {
+                            backgroundColor: theme.colors.surface,
+                            borderColor: theme.colors.divider,
+                          },
+                        ]}>
+                        <View
+                          style={[
+                            styles.favoriteTileImageWrap,
+                            {
+                              backgroundColor: product.imageUri
+                                ? theme.colors.surfaceMuted
+                                : fallbackColor,
+                            },
+                          ]}>
+                          {product.imageUri ? (
+                            <Image
+                              source={{ uri: product.imageUri }}
+                              style={styles.favoriteTileImage}
+                            />
+                          ) : (
+                            <Text
+                              style={[
+                                styles.favoriteTileFallback,
+                                { color: fallbackTextColor },
+                              ]}>
+                              {getProductTileInitials(product)}
+                            </Text>
+                          )}
+                        </View>
+                        <View style={styles.favoriteTileBody}>
+                          <Text
+                            numberOfLines={1}
+                            style={[styles.favoriteTileTitle, { color: theme.colors.text }]}>
+                            {product.tileLabel?.trim() || product.name}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                {!favoriteProducts.length ? (
+                  <EmptyNotice
+                    title="No favorites yet"
+                    body="Mark items as favorites when you create or edit them."
+                  />
+                ) : null}
+              </ScrollView>
+            </View>
           ) : (
             <View style={{ flex: 1, paddingBottom: floatingButtonReserve }}>
               <SearchRow value={search} onChangeText={setSearch} />
@@ -296,10 +563,7 @@ export function CheckoutScreen() {
                   ]}>
                   <View style={[styles.libraryRail, { backgroundColor: theme.colors.rail }]}>
                     {LIBRARY_SECTIONS.map(section => {
-                      const selected =
-                        tab === 'favorites'
-                          ? section.key === 'items'
-                          : librarySection === section.key;
+                      const selected = librarySection === section.key;
                       return (
                         <Pressable
                           key={section.key}
@@ -333,10 +597,7 @@ export function CheckoutScreen() {
                         },
                       ]}>
                       {LIBRARY_SECTIONS.map(section => {
-                        const selected =
-                          tab === 'favorites'
-                            ? section.key === 'items'
-                            : librarySection === section.key;
+                        const selected = librarySection === section.key;
 
                         return (
                           <Pressable
@@ -357,9 +618,7 @@ export function CheckoutScreen() {
                                   fontWeight: selected ? '800' : '700',
                                 },
                               ]}>
-                              {tab === 'favorites' && section.key === 'items'
-                                ? 'Favorites'
-                                : section.label}
+                              {section.label}
                             </Text>
                             <MaterialDesignIcons
                               color={theme.colors.textMuted}
@@ -392,6 +651,7 @@ export function CheckoutScreen() {
                               }
                               showChevron={false}
                               compact
+                              onPress={() => handleDiscountPress(discount)}
                             />
                           ))}
                           {!activeDiscounts.length ? (
@@ -411,16 +671,9 @@ export function CheckoutScreen() {
                               showChevron={false}
                               compact
                               thumbnail={<Thumbnail product={product} />}
-                              onPress={() => addProductToCart(product.id)}
+                              onPress={() => handleProductPress(product)}
                             />
                           ))}
-
-                          {tab === 'favorites' && !favoriteProducts.length ? (
-                            <EmptyNotice
-                              title="No favorites yet"
-                              body="Mark items as favorites when you create or edit them."
-                            />
-                          ) : null}
 
                           {!activeProducts.length && tab === 'library' ? (
                             <EmptyNotice
@@ -511,9 +764,309 @@ export function CheckoutScreen() {
           />
         </View>
       </View>
+
+      <Modal
+        visible={!!customizingProduct}
+        animationType="slide"
+        onRequestClose={closeProductCustomizer}>
+        <SafeAreaView style={[styles.customizerScreen, { backgroundColor: theme.colors.surface }]}>
+          {customizingProduct ? (
+            <>
+              <View style={styles.customizerHeader}>
+                <Pressable
+                  onPress={closeProductCustomizer}
+                  style={[styles.customizerClose, { backgroundColor: theme.colors.surfaceMuted }]}>
+                  <MaterialDesignIcons color={theme.colors.text} name="close" size={28} />
+                </Pressable>
+                <Text style={[styles.customizerTitle, { color: theme.colors.text }]}>
+                  {customizingProduct.name}
+                </Text>
+                <View style={{ width: 58 }} />
+              </View>
+
+              <ScrollView
+                style={{ flex: 1 }}
+                contentContainerStyle={styles.customizerContent}>
+                {(customizingProduct.optionSets ?? []).map(optionSet => (
+                  <View key={optionSet.id} style={styles.customizerSection}>
+                    <View style={styles.customizerSectionHeader}>
+                      <Text style={[styles.customizerSectionTitle, { color: theme.colors.text }]}>
+                        {optionSet.displayName || optionSet.name}
+                      </Text>
+                      <View
+                        style={[
+                          styles.customizerBadge,
+                          { backgroundColor: theme.colors.surfaceMuted },
+                        ]}>
+                        <Text
+                          style={[
+                            styles.customizerBadgeLabel,
+                            { color: theme.colors.textMuted },
+                          ]}>
+                          Select 1
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.customizerGrid}>
+                      {optionSet.values.map(value => {
+                        const selected = selectedOptionValueIds[optionSet.id] === value.id;
+                        return (
+                          <Pressable
+                            key={value.id}
+                            onPress={() =>
+                              setSelectedOptionValueIds(current => ({
+                                ...current,
+                                [optionSet.id]: value.id,
+                              }))
+                            }
+                            style={[
+                              styles.choiceCard,
+                              {
+                                backgroundColor: theme.colors.surfaceMuted,
+                                borderColor: selected ? theme.colors.text : theme.colors.border,
+                              },
+                            ]}>
+                            <Text style={[styles.choiceTitle, { color: theme.colors.text }]}>
+                              {value.name}
+                            </Text>
+                            <Text
+                              style={[styles.choiceSubtitle, { color: theme.colors.textMuted }]}>
+                              Variable
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </View>
+                ))}
+
+                {customizationModifierSets.map(modifierSet => (
+                  <View key={modifierSet.id} style={styles.customizerSection}>
+                    <Text style={[styles.customizerSectionTitle, { color: theme.colors.text }]}>
+                      {modifierSet.name}
+                    </Text>
+                    <View style={styles.customizerGrid}>
+                      {modifierSet.modifiers.map(modifier => {
+                        const selected = selectedModifierIds.includes(modifier.id);
+                        return (
+                          <Pressable
+                            key={modifier.id}
+                            onPress={() => toggleModifier(modifier.id)}
+                            style={[
+                              styles.choiceCard,
+                              {
+                                backgroundColor: theme.colors.surfaceMuted,
+                                borderColor: selected ? theme.colors.text : theme.colors.border,
+                              },
+                            ]}>
+                            <Text style={[styles.choiceTitle, { color: theme.colors.text }]}>
+                              {modifier.name}
+                            </Text>
+                            <Text
+                              style={[styles.choiceSubtitle, { color: theme.colors.textMuted }]}>
+                              {modifier.priceAdjustmentInCents > 0
+                                ? `+${formatCurrency(modifier.priceAdjustmentInCents)}`
+                                : 'Optional'}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </View>
+                ))}
+
+                <View style={styles.customizerSection}>
+                  <Text style={[styles.customizerSectionTitle, { color: theme.colors.text }]}>
+                    Note
+                  </Text>
+                  <TextInput
+                    value={customizationNote}
+                    onChangeText={setCustomizationNote}
+                    placeholder="Add an item note..."
+                    placeholderTextColor={theme.colors.textMuted}
+                    multiline
+                    style={[
+                      styles.customizerNoteInput,
+                      {
+                        color: theme.colors.text,
+                        borderColor: theme.colors.border,
+                        backgroundColor: theme.colors.surface,
+                      },
+                    ]}
+                  />
+                </View>
+              </ScrollView>
+
+              <View
+                style={[
+                  styles.customizerFooter,
+                  {
+                    paddingBottom: insets.bottom + 12,
+                    backgroundColor: theme.colors.surface,
+                  },
+                ]}>
+                <View
+                  style={[
+                    styles.quantityPill,
+                    { borderColor: theme.colors.border, backgroundColor: theme.colors.surface },
+                  ]}>
+                  <Pressable
+                    onPress={() => setCustomizationQuantity(current => Math.max(1, current - 1))}
+                    style={[
+                      styles.quantityButton,
+                      { backgroundColor: theme.colors.surfaceMuted },
+                    ]}>
+                    <MaterialDesignIcons color={theme.colors.text} name="minus" size={18} />
+                  </Pressable>
+                  <Text style={[styles.quantityValue, { color: theme.colors.text }]}>
+                    {customizationQuantity}
+                  </Text>
+                  <Pressable
+                    onPress={() => setCustomizationQuantity(current => current + 1)}
+                    style={[
+                      styles.quantityButton,
+                      { backgroundColor: theme.colors.surfaceMuted },
+                    ]}>
+                    <MaterialDesignIcons color={theme.colors.text} name="plus" size={18} />
+                  </Pressable>
+                </View>
+
+                <PrimaryPillButton
+                  label={`Done${customizationExtraInCents > 0 ? ` • ${formatCurrency((customizingProduct.priceInCents + customizationExtraInCents) * customizationQuantity)}` : ''}`}
+                  onPress={submitCustomizedProduct}
+                  disabled={!customizationCanSubmit}
+                  style={styles.customizerDoneButton}
+                />
+              </View>
+            </>
+          ) : null}
+        </SafeAreaView>
+      </Modal>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={!!restrictedDiscount}
+        onRequestClose={closeRestrictedDiscountFlow}>
+        <View style={[styles.restrictedDiscountBackdrop, { backgroundColor: theme.colors.overlay }]}>
+          <View
+            style={[
+              styles.restrictedDiscountCard,
+              { backgroundColor: theme.colors.surface, borderColor: theme.colors.border },
+            ]}>
+            {!showDiscountAuth ? (
+              <>
+                <Text style={[styles.restrictedDiscountTitle, { color: theme.colors.text }]}>
+                  You do not have permission
+                </Text>
+                <Text style={[styles.restrictedDiscountBody, { color: theme.colors.textMuted }]}>
+                  An admin or manager must enter their PIN to apply this discount.
+                </Text>
+                <View style={styles.restrictedDiscountActions}>
+                  <Pressable
+                    onPress={closeRestrictedDiscountFlow}
+                    style={[
+                      styles.restrictedDiscountButton,
+                      {
+                        backgroundColor: theme.colors.surfaceMuted,
+                        borderColor: theme.colors.border,
+                      },
+                    ]}>
+                    <Text style={[styles.restrictedDiscountButtonLabel, { color: theme.colors.text }]}>
+                      Cancel
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setShowDiscountAuth(true)}
+                    style={[
+                      styles.restrictedDiscountButton,
+                      { backgroundColor: theme.colors.accent, borderColor: theme.colors.accent },
+                    ]}>
+                    <Text
+                      style={[
+                        styles.restrictedDiscountButtonLabel,
+                        { color: theme.colors.accentText },
+                      ]}>
+                      Continue
+                    </Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : (
+              <>
+                <Text style={[styles.restrictedDiscountTitle, { color: theme.colors.text }]}>
+                  Enter manager PIN
+                </Text>
+                <Animated.View
+                  style={[styles.discountPinDots, { transform: [{ translateX: shake }] }]}>
+                  {Array.from({ length: 4 }).map((_, index) => {
+                    const filled = index < managerPin.length;
+                    return (
+                      <View
+                        key={index}
+                        style={[
+                          styles.discountPinDot,
+                          {
+                            borderColor: discountPinError ? theme.colors.danger : theme.colors.border,
+                            backgroundColor: filled ? theme.colors.text : 'transparent',
+                          },
+                        ]}
+                      />
+                    );
+                  })}
+                </Animated.View>
+                <Text
+                  style={[
+                    styles.discountPinErrorText,
+                    {
+                      color: discountPinError ? theme.colors.danger : theme.colors.textMuted,
+                    },
+                  ]}>
+                  {discountPinError || ' '}
+                </Text>
+                <View style={styles.discountPinKeypad}>
+                  {['1', '2', '3', '4', '5', '6', '7', '8', '9', '⌫', '0'].map(value => (
+                    <Pressable
+                      key={value}
+                      onPress={() => {
+                        if (value === '⌫') {
+                          setManagerPin(current => current.slice(0, -1));
+                          setDiscountPinError('');
+                          return;
+                        }
+                        appendManagerPin(value);
+                      }}
+                      style={[
+                        styles.discountPinKeypadButton,
+                        {
+                          backgroundColor: theme.colors.surfaceMuted,
+                          borderColor: theme.colors.border,
+                        },
+                      ]}>
+                      {value === '⌫' ? (
+                        <MaterialDesignIcons
+                          name="backspace-outline"
+                          size={20}
+                          color={theme.colors.text}
+                        />
+                      ) : (
+                        <Text style={[styles.discountPinKeypadLabel, { color: theme.colors.text }]}>
+                          {value}
+                        </Text>
+                      )}
+                    </Pressable>
+                  ))}
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
+
+type CartItemMetadata = NonNullable<CartItem['metadata']>;
 
 const styles = StyleSheet.create({
   screen: {
@@ -646,6 +1199,48 @@ const styles = StyleSheet.create({
   libraryPlaceholder: {
     minHeight: 24,
   },
+  favoritesScrollContent: {
+    paddingTop: 14,
+    paddingBottom: 10,
+    gap: 16,
+  },
+  favoritesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: 12,
+  },
+  favoriteTile: {
+    width: '48.2%',
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  favoriteTileImageWrap: {
+    aspectRatio: 0.96,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  favoriteTileImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  favoriteTileFallback: {
+    fontSize: 28,
+    fontWeight: '900',
+    letterSpacing: -1,
+  },
+  favoriteTileBody: {
+    minHeight: 34,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    justifyContent: 'center',
+  },
+  favoriteTileTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
   createMenuBackdrop: {
     position: 'absolute',
     top: 0,
@@ -670,6 +1265,201 @@ const styles = StyleSheet.create({
   },
   createMenuLabel: {
     fontSize: 17,
+    fontWeight: '700',
+  },
+  customizerScreen: {
+    flex: 1,
+  },
+  customizerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 10,
+  },
+  customizerClose: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  customizerTitle: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 20,
+    fontWeight: '800',
+    marginHorizontal: 12,
+  },
+  customizerContent: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 24,
+    gap: 24,
+  },
+  customizerSection: {
+    gap: 14,
+  },
+  customizerSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  customizerSectionTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  customizerBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  customizerBadgeLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  customizerGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  choiceCard: {
+    width: '48%',
+    minHeight: 92,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    justifyContent: 'center',
+    gap: 4,
+  },
+  choiceTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  choiceSubtitle: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  customizerNoteInput: {
+    minHeight: 144,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    fontSize: 16,
+    textAlignVertical: 'top',
+  },
+  customizerFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  quantityPill: {
+    width: 118,
+    height: 54,
+    borderRadius: 27,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 6,
+  },
+  quantityButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quantityValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    minWidth: 24,
+    textAlign: 'center',
+  },
+  customizerDoneButton: {
+    flex: 1,
+    minHeight: 54,
+  },
+  restrictedDiscountBackdrop: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  restrictedDiscountCard: {
+    width: '100%',
+    maxWidth: 420,
+    borderRadius: 24,
+    borderWidth: 1,
+    padding: 22,
+    gap: 16,
+  },
+  restrictedDiscountTitle: {
+    fontSize: 26,
+    fontWeight: '900',
+    letterSpacing: -0.8,
+    textAlign: 'center',
+  },
+  restrictedDiscountBody: {
+    fontSize: 15,
+    lineHeight: 22,
+    textAlign: 'center',
+  },
+  restrictedDiscountActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  restrictedDiscountButton: {
+    flex: 1,
+    minHeight: 52,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  restrictedDiscountButtonLabel: {
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  discountPinDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 14,
+    marginTop: 2,
+  },
+  discountPinDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 999,
+    borderWidth: 1.5,
+  },
+  discountPinErrorText: {
+    minHeight: 20,
+    textAlign: 'center',
+    fontSize: 14,
+  },
+  discountPinKeypad: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  discountPinKeypadButton: {
+    width: 84,
+    height: 62,
+    borderRadius: 18,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  discountPinKeypadLabel: {
+    fontSize: 24,
     fontWeight: '700',
   },
 });

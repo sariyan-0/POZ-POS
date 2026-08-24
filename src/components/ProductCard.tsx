@@ -1,8 +1,9 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Product } from '../models/pos';
 import { useAppTheme } from '../theme';
 import { formatCurrency } from '../utils/format';
+import { getProductTileInitials, getReadableTileTextColor } from '../utils/productTile';
 import { Pill } from './ui';
 
 export function ProductCard({
@@ -36,12 +37,26 @@ export function ProductCard({
         style={[
           styles.placeholder,
           {
-            backgroundColor: theme.colors.surfaceMuted,
+            backgroundColor: product.tileColor?.trim() || theme.colors.surfaceMuted,
           },
         ]}>
-        <Text style={[styles.placeholderText, { color: theme.colors.text }]}>
-          {product.imagePlaceholder ?? 'PO'}
-        </Text>
+        {product.imageUri ? (
+          <Image source={{ uri: product.imageUri }} style={styles.placeholderImage} />
+        ) : (
+          <Text
+            style={[
+              styles.placeholderText,
+              {
+                color: getReadableTileTextColor(
+                  product.tileColor?.trim() || theme.colors.surfaceMuted,
+                  theme.colors.text,
+                  theme.colors.surface,
+                ),
+              },
+            ]}>
+            {getProductTileInitials(product)}
+          </Text>
+        )}
       </View>
       <View style={{ gap: 6 }}>
         <Text style={[styles.name, { color: theme.colors.text }]}>{product.name}</Text>
@@ -77,6 +92,12 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  placeholderImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
   },
   placeholderText: {
     fontSize: 16,

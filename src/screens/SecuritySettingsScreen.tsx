@@ -26,6 +26,7 @@ export function SecuritySettingsScreen() {
     updateCurrentStaffPin,
     createStaffProfile,
     updateStaffProfile,
+    deleteStaffProfile,
   } = usePOS();
   const theme = useAppTheme();
   const [currentPin, setCurrentPin] = useState('');
@@ -47,6 +48,11 @@ export function SecuritySettingsScreen() {
         : undefined,
     [editingStaffId, state.staffMembers],
   );
+  const activeStaffMembers = useMemo(
+    () => state.staffMembers.filter(staffMember => staffMember.active),
+    [state.staffMembers],
+  );
+  const currentStaffHasPin = !!currentStaff?.pinHash?.trim() && !!currentStaff?.pinSalt?.trim();
 
   function resetProfileForm() {
     setEditingStaffId(null);
@@ -125,6 +131,23 @@ export function SecuritySettingsScreen() {
     setProfileMessage('');
   }
 
+  function handleDeleteProfile() {
+    if (!editingStaff) {
+      return;
+    }
+
+    const result = deleteStaffProfile(editingStaff.id);
+    if (!result.ok) {
+      setProfileError(true);
+      setProfileMessage(result.message);
+      return;
+    }
+
+    setProfileError(false);
+    setProfileMessage('Staff profile deleted.');
+    resetProfileForm();
+  }
+
   return (
     <AppScreen
       title="Security"
@@ -138,27 +161,29 @@ export function SecuritySettingsScreen() {
 
       <View style={[styles.block, { backgroundColor: theme.colors.surface }]}>
         <Text style={[styles.label, { color: theme.colors.textMuted }]}>Change your PIN</Text>
-        <TextInput
-          value={currentPin}
-          onChangeText={value => {
-            setCurrentPin(value);
-            if (securityMessage) {
-              setSecurityMessage('');
-            }
-          }}
-          keyboardType="number-pad"
-          secureTextEntry
-          placeholder="Current PIN"
-          placeholderTextColor={theme.colors.textMuted}
-          style={[
-            styles.input,
-            {
-              color: theme.colors.text,
-              borderColor: theme.colors.border,
-              backgroundColor: theme.colors.surfaceMuted,
-            },
-          ]}
-        />
+        {currentStaffHasPin ? (
+          <TextInput
+            value={currentPin}
+            onChangeText={value => {
+              setCurrentPin(value);
+              if (securityMessage) {
+                setSecurityMessage('');
+              }
+            }}
+            keyboardType="number-pad"
+            secureTextEntry
+            placeholder="Current PIN"
+            placeholderTextColor={theme.colors.textMuted}
+            style={[
+              styles.input,
+              {
+                color: theme.colors.text,
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.surfaceMuted,
+              },
+            ]}
+          />
+        ) : null}
         <TextInput
           value={newPin}
           onChangeText={value => {
@@ -212,7 +237,10 @@ export function SecuritySettingsScreen() {
                 : theme.colors.textMuted,
             },
           ]}>
-          {securityMessage || 'Use a 4 digit PIN for staff sign-in.'}
+          {securityMessage ||
+            (currentStaffHasPin
+              ? 'Use a 4 digit PIN for staff sign-in.'
+              : 'No PIN is set yet. Add one here if you want the owner account locked.')}
         </Text>
         <Pressable
           onPress={handleSavePin}
@@ -340,10 +368,26 @@ export function SecuritySettingsScreen() {
             </Pressable>
           ) : null}
         </View>
+        {editingStaff ? (
+          <Pressable
+            onPress={handleDeleteProfile}
+            style={[
+              styles.button,
+              styles.deleteButton,
+              {
+                backgroundColor: theme.colors.surfaceMuted,
+                borderColor: theme.colors.danger,
+              },
+            ]}>
+            <Text style={[styles.buttonLabel, { color: theme.colors.danger }]}>
+              Delete profile
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <View style={{ backgroundColor: theme.colors.surface, borderRadius: 18, overflow: 'hidden' }}>
-        {state.staffMembers.map(staffMember => (
+        {activeStaffMembers.map(staffMember => (
           <ListRow
             key={staffMember.id}
             label={`${staffMember.name} • ${roleLabel(staffMember.role)}`}
@@ -415,6 +459,10 @@ const styles = StyleSheet.create({
   },
   flexButton: {
     flex: 1,
+  },
+  deleteButton: {
+    borderWidth: 1,
+    marginTop: 10,
   },
   buttonLabel: {
     fontSize: 15,

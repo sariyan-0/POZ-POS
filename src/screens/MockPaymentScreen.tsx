@@ -3,10 +3,11 @@ import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-nativ
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons/static';
 import { CardNetworkLogo } from '../components/CardNetworkLogo';
 import { AppScreen } from '../components/POSUI';
-import { CurrencyCode, PaymentMethod } from '../models/pos';
+import { CartItem, CurrencyCode, PaymentMethod } from '../models/pos';
 import { usePOS } from '../hooks/usePOS';
 import { useRootNavigation } from '../navigation/AppNavigator';
 import {
+  BackendTerminalPaymentIntentSaleItem,
   createBackendTerminalPaymentIntent,
   describeTerminalPaymentError,
   getTerminalPaymentPreconditionError,
@@ -146,11 +147,32 @@ function getStageFailureCopy(
   }
 }
 
+function mapCartItemToBackendSaleItem(item: CartItem): BackendTerminalPaymentIntentSaleItem {
+  return {
+    localCartItemId: item.id,
+    type: item.type,
+    productId: item.productId,
+    discountId: item.discountId,
+    name: item.title,
+    sku: item.sku,
+    quantity: item.quantity,
+    unitPriceInCents: item.unitPriceInCents,
+    lineTotalInCents: item.unitPriceInCents * item.quantity,
+    taxable: item.taxable,
+    note: item.note,
+    discountType: item.metadata?.discountType,
+    applyAfterTaxes: item.metadata?.applyAfterTaxes,
+    authorizedByStaffId: item.metadata?.authorizedByStaffId,
+  };
+}
+
 export function MockPaymentScreen() {
   const theme = useAppTheme();
   const navigation = useRootNavigation();
   const {
     total,
+    subtotal,
+    tax,
     state,
     selectedCustomer,
     createApprovedTransaction,
@@ -296,6 +318,14 @@ export function MockPaymentScreen() {
           amount: saleAmountAtStart,
           currency: saleCurrencyAtStart,
           idempotencyKey: idempotencyKeyRef.current,
+          sale: {
+            subtotalInCents: subtotal,
+            taxInCents: tax,
+            totalInCents: saleAmountAtStart,
+            currency: saleCurrencyAtStart,
+            itemCount: state.cart.reduce((sum, item) => sum + item.quantity, 0),
+            items: state.cart.map(mapCartItemToBackendSaleItem),
+          },
           customer: selectedCustomer
             ? {
                 localCustomerId: selectedCustomer.id,

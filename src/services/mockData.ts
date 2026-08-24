@@ -1,13 +1,18 @@
 import { AppSettings, POSState } from '../models/pos';
-import { createPinCredentials } from '../utils/pin';
-
-const defaultOwnerCredentials = createPinCredentials('1234');
 
 export const defaultSettings: AppSettings = {
   business: {
     businessName: 'Powers of Zero',
     currency: 'CAD',
     defaultTaxRate: 13,
+    taxDefinitions: [
+      {
+        id: 'tax-hst',
+        name: 'HST',
+        rate: 13,
+        enabled: true,
+      },
+    ],
   },
   hardware: {
     readerLabel: 'WisePad 3',
@@ -20,6 +25,7 @@ export const defaultSettings: AppSettings = {
 
 export const initialPOSState: POSState = {
   products: [],
+  modifierSets: [],
   discounts: [],
   cart: [],
   currentCustomerId: undefined,
@@ -28,13 +34,13 @@ export const initialPOSState: POSState = {
     {
       id: 'staff-owner',
       name: 'Store Owner',
-      pinHash: defaultOwnerCredentials.pinHash,
-      pinSalt: defaultOwnerCredentials.pinSalt,
+      pinHash: '',
+      pinSalt: '',
       role: 'owner',
       active: true,
     },
   ],
-  currentStaffId: undefined,
+  currentStaffId: 'staff-owner',
   transactions: [],
   settings: defaultSettings,
 };

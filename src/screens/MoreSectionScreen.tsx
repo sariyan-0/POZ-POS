@@ -14,12 +14,14 @@ type MoreSectionRoute = RouteProp<RootStackParamList, 'MoreSection'>;
 
 export function MoreSectionScreen() {
   const { params } = useRoute<MoreSectionRoute>();
-  const { state, updateTaxRate, updateAppearanceMode } = usePOS();
+  const { state, updateTaxRate, updateAppearanceMode, upsertTaxDefinition } = usePOS();
   const theme = useAppTheme();
   const terminal = useAppStripeTerminal();
   const [taxRate, setTaxRate] = useState(
     state.settings.business.defaultTaxRate.toString(),
   );
+  const [taxName, setTaxName] = useState('');
+  const [taxValue, setTaxValue] = useState('');
 
   if (params.section === 'hardware') {
     return (
@@ -80,6 +82,97 @@ export function MoreSectionScreen() {
             }}>
             <Text style={{ color: theme.colors.accentText, fontSize: 15, fontWeight: '800' }}>
               Save tax rate
+            </Text>
+          </Pressable>
+        </View>
+        <View
+          style={{
+            backgroundColor: theme.colors.surface,
+            borderRadius: 18,
+            padding: 18,
+            gap: 12,
+          }}>
+          <Text style={{ color: theme.colors.text, fontSize: 20, fontWeight: '800' }}>
+            Tax types
+          </Text>
+          {state.settings.business.taxDefinitions.map(tax => (
+            <View
+              key={tax.id}
+              style={{
+                minHeight: 68,
+                borderWidth: 1,
+                borderRadius: 16,
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.surfaceMuted,
+                paddingHorizontal: 14,
+                paddingVertical: 12,
+                justifyContent: 'center',
+              }}>
+              <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '700' }}>
+                {tax.name}
+              </Text>
+              <Text style={{ color: theme.colors.textMuted, marginTop: 4 }}>
+                {tax.rate}% {tax.enabled ? 'enabled' : 'disabled'}
+              </Text>
+            </View>
+          ))}
+          <TextInput
+            value={taxName}
+            onChangeText={setTaxName}
+            placeholder="Tax name"
+            placeholderTextColor={theme.colors.textMuted}
+            style={{
+              minHeight: 52,
+              borderWidth: 1,
+              borderRadius: 12,
+              paddingHorizontal: 14,
+              fontSize: 16,
+              color: theme.colors.text,
+              borderColor: theme.colors.border,
+              backgroundColor: theme.colors.surfaceMuted,
+            }}
+          />
+          <TextInput
+            value={taxValue}
+            onChangeText={setTaxValue}
+            placeholder="Tax percentage"
+            placeholderTextColor={theme.colors.textMuted}
+            keyboardType="numeric"
+            style={{
+              minHeight: 52,
+              borderWidth: 1,
+              borderRadius: 12,
+              paddingHorizontal: 14,
+              fontSize: 16,
+              color: theme.colors.text,
+              borderColor: theme.colors.border,
+              backgroundColor: theme.colors.surfaceMuted,
+            }}
+          />
+          <Pressable
+            onPress={() => {
+              if (!taxName.trim()) {
+                return;
+              }
+              upsertTaxDefinition({
+                id: `tax-${taxName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+                name: taxName.trim(),
+                rate: Math.max(0, Number.parseFloat(taxValue || '0') || 0),
+                enabled: true,
+              });
+              setTaxName('');
+              setTaxValue('');
+            }}
+            style={{
+              minHeight: 50,
+              borderRadius: 14,
+              alignItems: 'center',
+              justifyContent: 'center',
+              paddingHorizontal: 14,
+              backgroundColor: theme.colors.accent,
+            }}>
+            <Text style={{ color: theme.colors.accentText, fontSize: 15, fontWeight: '800' }}>
+              Add tax type
             </Text>
           </Pressable>
         </View>

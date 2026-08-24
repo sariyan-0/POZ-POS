@@ -13,6 +13,32 @@ export type BackendTerminalPaymentIntent = {
   stripeCustomerId?: string;
 };
 
+export type BackendTerminalPaymentIntentSaleItem = {
+  localCartItemId: string;
+  type: 'product' | 'custom' | 'discount';
+  productId?: string;
+  discountId?: string;
+  name: string;
+  sku?: string;
+  quantity: number;
+  unitPriceInCents: number;
+  lineTotalInCents: number;
+  taxable: boolean;
+  note?: string;
+  discountType?: 'fixed' | 'percentage';
+  applyAfterTaxes?: boolean;
+  authorizedByStaffId?: string;
+};
+
+export type BackendTerminalPaymentIntentSalePayload = {
+  subtotalInCents: number;
+  taxInCents: number;
+  totalInCents: number;
+  currency: string;
+  itemCount: number;
+  items: BackendTerminalPaymentIntentSaleItem[];
+};
+
 export type TerminalPaymentDebugSummary = {
   title?: string;
   message: string;
@@ -58,6 +84,7 @@ type CreatePaymentIntentPayload = {
   amount: number;
   currency: string;
   idempotencyKey: string;
+  sale: BackendTerminalPaymentIntentSalePayload;
   customer?: {
     localCustomerId: string;
     stripeCustomerId?: string;
@@ -307,6 +334,10 @@ export async function createBackendTerminalPaymentIntent(
     amount: payload.amount,
     currency: payload.currency.toLowerCase(),
     idempotencyKey: payload.idempotencyKey,
+    sale: {
+      ...payload.sale,
+      currency: payload.sale.currency.toLowerCase(),
+    },
     customer: payload.customer,
   };
 

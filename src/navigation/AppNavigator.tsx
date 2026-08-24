@@ -18,8 +18,8 @@ import { MockPaymentScreen } from '../screens/MockPaymentScreen';
 import { ProductEditorScreen } from '../screens/ProductEditorScreen';
 import { DiscountEditorScreen } from '../screens/DiscountEditorScreen';
 import { DiscountsScreen } from '../screens/DiscountsScreen';
+import { CheckoutDiscountsScreen } from '../screens/CheckoutDiscountsScreen';
 import { TransactionDetailScreen } from '../screens/TransactionDetailScreen';
-import { ProductsScreen } from '../screens/ProductsScreen';
 import { MoreScreen } from '../screens/MoreScreen';
 import { MoneyScreen } from '../screens/MoneyScreen';
 import { OrdersScreen } from '../screens/OrdersScreen';
@@ -27,6 +27,11 @@ import { CurrentSaleScreen } from '../screens/CurrentSaleScreen';
 import { MoreSectionScreen } from '../screens/MoreSectionScreen';
 import { BackendSettingsScreen } from '../screens/BackendSettingsScreen';
 import { SecuritySettingsScreen } from '../screens/SecuritySettingsScreen';
+import { AddModifiersScreen } from '../screens/AddModifiersScreen';
+import { ItemSettingsScreen } from '../screens/ItemSettingsScreen';
+import { AllItemsScreen } from '../screens/AllItemsScreen';
+import { ModifiersScreen } from '../screens/ModifiersScreen';
+import { ModifierSetEditorScreen } from '../screens/ModifierSetEditorScreen';
 
 export type RootStackParamList = {
   MainTabs: undefined;
@@ -35,11 +40,16 @@ export type RootStackParamList = {
   ProductEditor: { productId?: string } | undefined;
   DiscountEditor: { discountId?: string } | undefined;
   Discounts: undefined;
+  CheckoutDiscounts: undefined;
   Items: undefined;
+  AllItems: undefined;
+  Modifiers: undefined;
+  ModifierSetEditor: { modifierSetId?: string } | undefined;
   Inventory: undefined;
   Settings: undefined;
   SecuritySettings: undefined;
   BackendSettings: undefined;
+  AddModifiers: undefined;
   MoreSection: { section: 'hardware' | 'taxes' | 'appearance' | 'developer' };
   TransactionDetail: { transactionId: string };
 };
@@ -170,23 +180,35 @@ export function AppNavigator() {
         <Stack.Screen
           name="ProductEditor"
           component={ProductEditorScreen}
-          options={({ route }) => ({
-            title: route.params?.productId ? 'Edit Product' : 'Add Product',
-          })}
+          options={{ headerShown: false }}
         />
         <Stack.Screen
           name="DiscountEditor"
           component={DiscountEditorScreen}
-          options={({ route }) => ({
-            title: route.params?.discountId ? 'Edit Discount' : 'Create Discount',
-          })}
+          options={{ headerShown: false }}
         />
         <Stack.Screen
           name="Discounts"
           component={DiscountsScreen}
           options={{ headerShown: false }}
         />
-        <Stack.Screen name="Items" component={ProductsScreen} options={{ title: 'Items' }} />
+        <Stack.Screen
+          name="CheckoutDiscounts"
+          component={CheckoutDiscountsScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen name="Items" component={ItemSettingsScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="AllItems" component={AllItemsScreen} options={{ headerShown: false }} />
+        <Stack.Screen
+          name="Modifiers"
+          component={ModifiersScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="ModifierSetEditor"
+          component={ModifierSetEditorScreen}
+          options={{ headerShown: false }}
+        />
         <Stack.Screen
           name="Inventory"
           component={InventoryScreen}
@@ -206,6 +228,11 @@ export function AppNavigator() {
           name="BackendSettings"
           component={BackendSettingsScreen}
           options={{ title: 'Backend / Server' }}
+        />
+        <Stack.Screen
+          name="AddModifiers"
+          component={AddModifiersScreen}
+          options={{ headerShown: false, presentation: 'card' }}
         />
         <Stack.Screen
           name="MoreSection"

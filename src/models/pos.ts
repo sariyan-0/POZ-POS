@@ -13,8 +13,38 @@ export interface Product {
   active: boolean;
   isFavorite: boolean;
   trackInventory: boolean;
+  taxIds?: string[];
+  optionSets?: ProductOptionSet[];
+  modifierSetIds?: string[];
   imageUri?: string;
   imagePlaceholder?: string;
+  tileColor?: string;
+  tileLabel?: string;
+}
+
+export interface ProductOptionValue {
+  id: string;
+  name: string;
+}
+
+export interface ProductOptionSet {
+  id: string;
+  name: string;
+  displayName: string;
+  values: ProductOptionValue[];
+}
+
+export interface ModifierSetItem {
+  id: string;
+  name: string;
+  priceAdjustmentInCents: number;
+}
+
+export interface ModifierSet {
+  id: string;
+  name: string;
+  itemIds?: string[];
+  modifiers: ModifierSetItem[];
 }
 
 export type DiscountType = 'fixed' | 'percentage';
@@ -46,6 +76,19 @@ export interface CartItem {
     discountType?: DiscountType;
     applyAfterTaxes?: boolean;
     authorizedByStaffId?: string;
+    selectedOptions?: Array<{
+      optionSetId: string;
+      optionSetName: string;
+      valueId: string;
+      valueName: string;
+    }>;
+    selectedModifiers?: Array<{
+      modifierSetId: string;
+      modifierSetName: string;
+      modifierId: string;
+      modifierName: string;
+      priceAdjustmentInCents: number;
+    }>;
   };
 }
 
@@ -145,6 +188,14 @@ export interface BusinessSettings {
   businessName: string;
   currency: CurrencyCode;
   defaultTaxRate: number;
+  taxDefinitions: TaxDefinition[];
+}
+
+export interface TaxDefinition {
+  id: string;
+  name: string;
+  rate: number;
+  enabled: boolean;
 }
 
 export interface HardwareSettings {
@@ -164,6 +215,7 @@ export interface AppSettings {
 
 export interface POSState {
   products: Product[];
+  modifierSets: ModifierSet[];
   discounts: Discount[];
   cart: CartItem[];
   currentCustomerId?: string;

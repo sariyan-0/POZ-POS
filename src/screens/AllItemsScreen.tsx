@@ -7,15 +7,14 @@ import { useRootNavigation } from '../navigation/AppNavigator';
 import { useAppTheme } from '../theme';
 import { formatCurrency } from '../utils/format';
 
-export function ProductsScreen() {
+export function AllItemsScreen() {
   const { state, deactivateProduct } = usePOS();
   const navigation = useRootNavigation();
   const theme = useAppTheme();
 
   return (
     <AppScreen
-      title="Items"
-      subtitle="Compact catalog rows that feed Library and Favorites."
+      title="All items"
       rightSlot={
         <Pressable
           onPress={() => navigation.navigate('ProductEditor')}
@@ -62,7 +61,7 @@ export function ProductsScreen() {
       ) : (
         <EmptyNotice
           title="No items yet"
-          body="Create your first item to populate the Library tab."
+          body="Create your first item to populate the library."
         />
       )}
     </AppScreen>
