@@ -8,11 +8,11 @@ export interface TerminalConfiguration {
   locationId: string;
   locationDisplayName: string;
   locationAddressSummary: string;
-  readerMode: 'simulated' | 'bluetooth' | 'tap_to_pay';
+  readerMode: 'simulated' | 'bluetooth' | 'internet' | 'tap_to_pay';
   preferredReaderId: string;
   preferredReaderSerialNumber: string;
   preferredReaderLabel: string;
-  preferredDiscoveryMethod: 'bluetoothScan' | 'tapToPay' | '';
+  preferredDiscoveryMethod: 'bluetoothScan' | 'internet' | 'tapToPay' | '';
 }
 
 const DEFAULT_TERMINAL_CONFIGURATION: TerminalConfiguration = {
@@ -68,7 +68,9 @@ class TerminalConfigService {
             ? parsed.locationAddressSummary.trim()
             : '',
         readerMode:
-          parsed.readerMode === 'bluetooth' || parsed.readerMode === 'tap_to_pay'
+          parsed.readerMode === 'bluetooth' ||
+          parsed.readerMode === 'internet' ||
+          parsed.readerMode === 'tap_to_pay'
             ? parsed.readerMode
             : 'simulated',
         preferredReaderId:
@@ -85,6 +87,7 @@ class TerminalConfigService {
             : '',
         preferredDiscoveryMethod:
           parsed.preferredDiscoveryMethod === 'bluetoothScan' ||
+          parsed.preferredDiscoveryMethod === 'internet' ||
           parsed.preferredDiscoveryMethod === 'tapToPay'
             ? parsed.preferredDiscoveryMethod
             : '',

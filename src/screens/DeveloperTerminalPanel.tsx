@@ -20,7 +20,7 @@ import { useAppStripeTerminal } from '../terminal/StripeTerminalProvider';
 import { formatTerminalLocationAddress } from '../terminal/terminalLocations';
 import { useAppTheme } from '../theme';
 
-type ReaderMode = 'simulated' | 'bluetooth' | 'tap_to_pay';
+type ReaderMode = 'simulated' | 'bluetooth' | 'internet' | 'tap_to_pay';
 
 function statusTone(
   status: string,
@@ -63,6 +63,10 @@ function formatReaderMode(readerMode: ReaderMode): string {
     return 'Simulated reader';
   }
 
+  if (readerMode === 'internet') {
+    return 'Smart reader';
+  }
+
   if (readerMode === 'tap_to_pay') {
     return 'Tap to Pay';
   }
@@ -73,6 +77,10 @@ function formatReaderMode(readerMode: ReaderMode): string {
 function getReaderModeDescription(readerMode: ReaderMode): string {
   if (readerMode === 'simulated') {
     return 'Best for testing flows without hardware.';
+  }
+
+  if (readerMode === 'internet') {
+    return 'Connect an online Stripe smart reader like the S700.';
   }
 
   if (readerMode === 'tap_to_pay') {
@@ -261,6 +269,8 @@ export function DeveloperTerminalPanel() {
         selectedReader?.serialNumber ||
         (terminal.terminalConfig.readerMode === 'tap_to_pay'
           ? 'Tap to Pay'
+          : terminal.terminalConfig.readerMode === 'internet'
+            ? 'smart reader'
           : 'reader'),
     );
     setShowLocationPicker(true);
@@ -292,7 +302,11 @@ export function DeveloperTerminalPanel() {
       readerLabelToConnect ||
         pendingReader?.label ||
         pendingReader?.serialNumber ||
-        (terminal.terminalConfig.readerMode === 'tap_to_pay' ? 'Tap to Pay' : 'reader'),
+        (terminal.terminalConfig.readerMode === 'tap_to_pay'
+          ? 'Tap to Pay'
+          : terminal.terminalConfig.readerMode === 'internet'
+            ? 'smart reader'
+            : 'reader'),
     );
 
     if (locationIdOverride && locationIdOverride !== terminal.terminalConfig.locationId) {
@@ -412,6 +426,8 @@ export function DeveloperTerminalPanel() {
                   : terminal.readerConnectionMessage ||
                   (terminal.terminalConfig.readerMode === 'tap_to_pay'
                     ? 'Keep this device open, unlocked, and in the foreground for Stripe Terminal.'
+                    : terminal.terminalConfig.readerMode === 'internet'
+                      ? 'Make sure the S700 is powered on, online, and registered to the selected location.'
                     : 'Please wait while setup finishes.')}
               </Text>
             </View>
@@ -429,11 +445,13 @@ export function DeveloperTerminalPanel() {
           1. Choose reader type
         </Text>
         <View style={{ gap: 10 }}>
-          {(['simulated', 'bluetooth', 'tap_to_pay'] as ReaderMode[]).map(mode => {
+          {(['simulated', 'bluetooth', 'internet', 'tap_to_pay'] as ReaderMode[]).map(mode => {
             const selected = terminal.terminalConfig.readerMode === mode;
             const iconName =
               mode === 'simulated'
                 ? 'cellphone-cog'
+                : mode === 'internet'
+                  ? 'tablet-dashboard'
                 : mode === 'bluetooth'
                   ? 'credit-card-wireless-outline'
                   : 'cellphone-nfc';
@@ -552,6 +570,8 @@ export function DeveloperTerminalPanel() {
                   : terminal.discoveryStatus === 'discovering'
                     ? terminal.terminalConfig.readerMode === 'tap_to_pay'
                       ? 'Checking this phone'
+                      : terminal.terminalConfig.readerMode === 'internet'
+                        ? 'Searching for smart readers'
                       : 'Searching for readers'
                   : terminal.discoveredReaders.length
                     ? 'Reader found'
@@ -569,6 +589,8 @@ export function DeveloperTerminalPanel() {
                     : terminal.discoveryStatus === 'discovering'
                       ? terminal.terminalConfig.readerMode === 'tap_to_pay'
                         ? 'Checking this phone for Tap to Pay support.'
+                        : terminal.terminalConfig.readerMode === 'internet'
+                          ? 'Looking for online Stripe smart readers for this location.'
                         : 'Looking for nearby Stripe readers.'
                   : terminal.discoveredReaders.length
                     ? 'Tap the reader below to connect it.'
@@ -590,6 +612,8 @@ export function DeveloperTerminalPanel() {
                       ? 'Try Again'
                       : terminal.terminalConfig.readerMode === 'tap_to_pay'
                         ? 'Check Phone'
+                        : terminal.terminalConfig.readerMode === 'internet'
+                          ? 'Find S700'
                         : 'Discover'
                 }
                 onPress={() => {
@@ -641,6 +665,8 @@ export function DeveloperTerminalPanel() {
                   name={
                     terminal.terminalConfig.readerMode === 'tap_to_pay'
                       ? 'cellphone-nfc'
+                      : terminal.terminalConfig.readerMode === 'internet'
+                        ? 'tablet-dashboard'
                       : reader.simulated
                         ? 'cellphone-cog'
                         : 'credit-card-wireless-outline'
@@ -652,6 +678,8 @@ export function DeveloperTerminalPanel() {
                 <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '800' }}>
                   {terminal.terminalConfig.readerMode === 'tap_to_pay'
                     ? 'Tap to Pay on this device'
+                    : terminal.terminalConfig.readerMode === 'internet'
+                      ? 'Stripe smart reader'
                     : reader.simulated
                       ? 'Simulated Reader'
                       : formatDeviceType(reader.deviceType)}
@@ -666,6 +694,8 @@ export function DeveloperTerminalPanel() {
                 <Text style={{ color: theme.colors.textMuted, fontSize: 13 }}>
                   {terminal.terminalConfig.readerMode === 'tap_to_pay'
                     ? 'Phone ready'
+                    : terminal.terminalConfig.readerMode === 'internet'
+                      ? `Online smart reader • ${reader.status}`
                     : `${reader.simulated ? 'Simulated' : 'Available'} • ${reader.status}`}
                 </Text>
               </View>
@@ -702,6 +732,8 @@ export function DeveloperTerminalPanel() {
                 <Text style={{ color: theme.colors.text, fontSize: 17, fontWeight: '800' }}>
                   {terminal.terminalConfig.readerMode === 'tap_to_pay'
                     ? 'Tap to Pay'
+                    : terminal.terminalConfig.readerMode === 'internet'
+                      ? 'Smart reader'
                     : formatDeviceType(terminal.connectedReader.deviceType)}
                 </Text>
                 <Text style={{ color: theme.colors.textMuted }}>

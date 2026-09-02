@@ -57,6 +57,10 @@ type ReaderConnectionStatus =
 type TerminalReaderDisplayMessage = string;
 type TerminalReaderInputOption = string;
 type ReaderMode = TerminalConfiguration['readerMode'];
+type SupportedDiscoveryMethod = Exclude<
+  TerminalConfiguration['preferredDiscoveryMethod'],
+  ''
+>;
 const CONNECT_READER_TIMEOUT_MS = 20000;
 const DISCOVER_READERS_TIMEOUT_MS = 15000;
 const BLUETOOTH_CONNECT_NOTICE_MS = 12000;
@@ -333,8 +337,7 @@ function StripeTerminalBootstrap({
 
     const connectedReaderSnapshot = sdkConnectedReader;
     const currentConfig = terminalConfigRef.current;
-    const nextDiscoveryMethod: TerminalConfiguration['preferredDiscoveryMethod'] =
-      currentConfig.readerMode === 'tap_to_pay' ? 'tapToPay' : 'bluetoothScan';
+    const nextDiscoveryMethod = getDiscoveryMethodForMode(currentConfig.readerMode);
     const nextConfig = {
       ...currentConfig,
       preferredReaderId: connectedReaderSnapshot.id?.trim() ?? '',
@@ -357,26 +360,12 @@ function StripeTerminalBootstrap({
 
     async function bootstrap() {
       try {
-        if (Platform.OS === 'android') {
+        if (requiresAndroidBluetoothPermissions(terminalConfigRef.current.readerMode)) {
           setStatus('requesting_permissions');
-          const permissionResult = await requestNeededAndroidPermissions({
-            accessFineLocation: {
-              title: 'Location access required',
-              message:
-                'PowersOfZeroPOS needs location access to discover nearby Stripe Terminal readers on Android.',
-              buttonPositive: 'Allow',
-            },
-          });
+          await ensureAndroidReaderPermissions();
 
           if (!isMounted) {
             return;
-          }
-
-          if (permissionResult.error) {
-            throw new Error(
-              Object.values(permissionResult.error)[0] ??
-                'Android permissions were denied',
-            );
           }
         }
 
@@ -486,8 +475,16 @@ function StripeTerminalBootstrap({
 
   function getDiscoveryMethodForMode(
     readerMode: ReaderMode,
-  ): DiscoverReadersParams['discoveryMethod'] {
-    return readerMode === 'tap_to_pay' ? 'tapToPay' : 'bluetoothScan';
+  ): SupportedDiscoveryMethod {
+    if (readerMode === 'tap_to_pay') {
+      return 'tapToPay';
+    }
+
+    if (readerMode === 'internet') {
+      return 'internet';
+    }
+
+    return 'bluetoothScan';
   }
 
   function buildDiscoverParams(readerMode: ReaderMode): DiscoverReadersParams {
@@ -495,6 +492,15 @@ function StripeTerminalBootstrap({
       return {
         discoveryMethod: 'tapToPay',
         simulated: shouldUseSimulatedTapToPay(),
+      };
+    }
+
+    if (readerMode === 'internet') {
+      const currentConfig = terminalConfigRef.current;
+      return {
+        discoveryMethod: 'internet',
+        timeout: 10,
+        locationId: currentConfig.locationId.trim() || undefined,
       };
     }
 
@@ -507,6 +513,27 @@ function StripeTerminalBootstrap({
 
   function shouldUseSimulatedTapToPay() {
     return Platform.OS === 'android' && __DEV__;
+  }
+
+  async function ensureAndroidReaderPermissions() {
+    if (Platform.OS !== 'android') {
+      return;
+    }
+
+    const permissionResult = await requestNeededAndroidPermissions({
+      accessFineLocation: {
+        title: 'Location access required',
+        message:
+          'PowersOfZeroPOS needs location access to discover nearby Stripe Terminal readers on Android.',
+        buttonPositive: 'Allow',
+      },
+    });
+
+    if (permissionResult.error) {
+      throw new Error(
+        Object.values(permissionResult.error)[0] ?? 'Android permissions were denied',
+      );
+    }
   }
 
   async function verifyTapToPaySupport() {
@@ -532,8 +559,7 @@ function StripeTerminalBootstrap({
 
   async function persistPreferredReader(reader: Reader.Type) {
     const currentConfig = terminalConfigRef.current;
-    const nextDiscoveryMethod =
-      currentConfig.readerMode === 'tap_to_pay' ? 'tapToPay' : 'bluetoothScan';
+    const nextDiscoveryMethod = getDiscoveryMethodForMode(currentConfig.readerMode);
     await saveTerminalConfig({
       ...currentConfig,
       preferredReaderId: reader.id?.trim() ?? '',
@@ -634,6 +660,10 @@ function StripeTerminalBootstrap({
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
     try {
+      if (requiresAndroidBluetoothPermissions(currentConfig.readerMode)) {
+        await ensureAndroidReaderPermissions();
+      }
+
       if (currentConfig.readerMode === 'tap_to_pay') {
         setReaderConnectionMessage(
           shouldUseSimulatedTapToPay()
@@ -651,6 +681,8 @@ function StripeTerminalBootstrap({
               new Error(
                 currentConfig.readerMode === 'tap_to_pay'
                   ? 'Tap to Pay discovery timed out. Confirm this device supports Tap to Pay, then try again.'
+                  : currentConfig.readerMode === 'internet'
+                    ? 'Smart reader discovery timed out. Make sure the S700 is online, registered to this location, and on the same Stripe account.'
                   : 'Reader discovery timed out. Try again with the selected reader mode, then rediscover.',
               ),
             );
@@ -670,6 +702,12 @@ function StripeTerminalBootstrap({
           shouldUseSimulatedTapToPay()
             ? 'Tap to Pay test reader is ready on this phone.'
             : 'Tap to Pay is supported on this phone. Choose a location to connect.',
+        );
+      } else if (currentConfig.readerMode === 'internet') {
+        setReaderConnectionMessage(
+          readersRef.current.length
+            ? 'Smart readers are online and ready to connect.'
+            : 'No online smart readers were found for this location yet.',
         );
       }
     } catch (error) {
@@ -717,7 +755,9 @@ function StripeTerminalBootstrap({
     setDisconnectReason(null);
     setConnectionStatus('connecting');
     setReaderConnectionMessage(
-      'Connecting to reader... keep the app open while Stripe finishes Bluetooth pairing.',
+      currentConfig.readerMode === 'internet'
+        ? 'Connecting to smart reader... keep the app open while Stripe syncs the S700.'
+        : 'Connecting to reader... keep the app open while Stripe finishes Bluetooth pairing.',
     );
 
     let noticeTimeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -725,17 +765,25 @@ function StripeTerminalBootstrap({
     try {
       noticeTimeoutId = setTimeout(() => {
         setReaderConnectionMessage(
-          'Still connecting... keep the reader nearby and watch for any Bluetooth pairing prompt.',
+          currentConfig.readerMode === 'internet'
+            ? 'Still connecting... make sure the S700 stays online and assigned to the selected location.'
+            : 'Still connecting... keep the reader nearby and watch for any Bluetooth pairing prompt.',
         );
       }, BLUETOOTH_CONNECT_NOTICE_MS);
 
-      const discoveryMethod = getDiscoveryMethodForMode(currentConfig.readerMode);
-      const result = await sdkConnectReader({
-        discoveryMethod,
-        reader: selectedReader,
-        locationId,
-        autoReconnectOnUnexpectedDisconnect: true,
-      });
+      const result =
+        currentConfig.readerMode === 'internet'
+          ? await sdkConnectReader({
+              discoveryMethod: 'internet',
+              reader: selectedReader,
+              failIfInUse: false,
+            })
+          : await sdkConnectReader({
+              discoveryMethod: getDiscoveryMethodForMode(currentConfig.readerMode),
+              reader: selectedReader,
+              locationId,
+              autoReconnectOnUnexpectedDisconnect: true,
+            });
 
       if (result.error) {
         setConnectionError(result.error.message);
@@ -1078,6 +1126,10 @@ function dedupeReaders(readers: Reader.Type[]): Reader.Type[] {
     seen.add(key);
     return true;
   });
+}
+
+function requiresAndroidBluetoothPermissions(readerMode: ReaderMode) {
+  return Platform.OS === 'android' && (readerMode === 'bluetooth' || readerMode === 'simulated');
 }
 
 async function settleQuickly(promise: Promise<void>, timeoutMs: number): Promise<void> {
