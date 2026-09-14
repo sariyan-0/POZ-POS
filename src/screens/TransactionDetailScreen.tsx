@@ -232,7 +232,7 @@ export function TransactionDetailScreen() {
     <AppScreen
       title="Transaction details"
       subtitle={`${formatDateTime(currentTransaction.createdAt)} • ${
-        currentTransaction.id
+        currentTransaction.referenceCode ?? currentTransaction.id
       }`}
     >
       <SummaryCard
@@ -333,6 +333,10 @@ export function TransactionDetailScreen() {
       </View>
 
       <InfoCard title="Sale information">
+        <DetailText
+          label="OneRegister reference"
+          value={currentTransaction.referenceCode ?? currentTransaction.id}
+        />
         <DetailText
           label="Subtotal"
           value={formatCurrency(

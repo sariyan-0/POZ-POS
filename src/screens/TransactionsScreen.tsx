@@ -96,8 +96,18 @@ function TransactionRow({
             <Text style={[styles.transactionDate, { color: theme.colors.text }]}>
               {formatDateTime(transaction.createdAt)}
             </Text>
-            <Text style={[styles.transactionMeta, { color: theme.colors.textMuted }]}>
+            <Text
+              style={[styles.transactionMeta, { color: theme.colors.textMuted }]}
+            >
               {getTransactionPaymentLabel(transaction)}
+            </Text>
+            <Text
+              style={[
+                styles.transactionReference,
+                { color: theme.colors.textMuted },
+              ]}
+            >
+              {transaction.referenceCode ?? transaction.id}
             </Text>
             {transaction.serverSyncStatus !== 'synced' ? (
               <Text style={[styles.syncState, { color: transaction.serverSyncStatus === 'failed' ? theme.colors.danger : theme.colors.textMuted }]}>
@@ -275,6 +285,11 @@ const styles = StyleSheet.create({
   transactionMeta: {
     fontSize: 17,
     fontWeight: '800',
+  },
+  transactionReference: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.35,
   },
   syncState: {
     fontSize: 11,

@@ -32,6 +32,7 @@ export async function recordTransaction(transaction: Transaction): Promise<Recor
 
   const payload = await apiClient.post<unknown>(apiConfig.endpoints.orders, {
     localOrderId: transaction.id,
+    referenceCode: transaction.referenceCode,
     occurredAt: transaction.createdAt,
     staffId: transaction.staff?.id,
     customerId: transaction.customer?.id,

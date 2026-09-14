@@ -191,6 +191,7 @@ export interface TransactionItem {
 
 export interface Transaction {
   id: string;
+  referenceCode?: string;
   createdAt: string;
   subtotal: number;
   tax: number;

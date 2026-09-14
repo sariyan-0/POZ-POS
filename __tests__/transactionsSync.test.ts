@@ -20,6 +20,7 @@ describe('transaction sync', () => {
       });
     const transaction: Transaction = {
       id: 'local-1',
+      referenceCode: 'OR-260911-ABC234',
       createdAt: '2026-09-11T12:00:00.000Z',
       subtotal: 1000,
       tax: 130,
@@ -64,6 +65,7 @@ describe('transaction sync', () => {
     expect(apiClient.post).toHaveBeenCalledWith(
       '/api/orders',
       expect.objectContaining({
+        referenceCode: transaction.referenceCode,
         staffId: transaction.staff?.id,
         occurredAt: transaction.createdAt,
         payment: expect.objectContaining({

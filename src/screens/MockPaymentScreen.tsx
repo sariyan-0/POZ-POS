@@ -473,7 +473,9 @@ export function MockPaymentScreen() {
           },
         });
         syncRecordedTransaction(transaction);
-        setTransactionId(transaction?.id ?? processedIntent.id);
+        setTransactionId(
+          transaction?.referenceCode ?? transaction?.id ?? processedIntent.id,
+        );
         setApprovedPayment({
           brand: cardPresentDetails?.brand,
           last4: cardPresentDetails?.last4,
@@ -511,7 +513,11 @@ export function MockPaymentScreen() {
         processorReference: processed.paymentId,
       });
       syncRecordedTransaction(transaction);
-      setTransactionId(transaction?.id ?? processed.transactionReference);
+      setTransactionId(
+        transaction?.referenceCode ??
+          transaction?.id ??
+          processed.transactionReference,
+      );
       setApprovedPayment({
         sourceLabel: method === 'cash' ? 'Cash payment' : 'Mock payment',
       });

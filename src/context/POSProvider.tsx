@@ -32,7 +32,7 @@ import {
 } from '../models/pos';
 import { initialPOSState } from '../services/mockData';
 import { loadPOSState, savePOSState } from '../storage/persistence';
-import { createId } from '../utils/id';
+import { createId, createTransactionReference } from '../utils/id';
 import { createPinCredentials, verifyPin } from '../utils/pin';
 import { fetchCatalog } from '../services/api/catalog';
 import { fetchStaff } from '../services/api/staff';
@@ -1446,6 +1446,7 @@ export function POSProvider({ children }: PropsWithChildren) {
         const items = createTransactionItems(state);
         const transaction: Transaction = {
           id: transactionReference,
+          referenceCode: createTransactionReference(),
           createdAt: new Date().toISOString(),
           subtotal,
           tax,

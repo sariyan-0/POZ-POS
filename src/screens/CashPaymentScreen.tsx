@@ -114,7 +114,7 @@ export function CashPaymentScreen() {
         );
       }
 
-      setCompletedReference(transaction.id);
+      setCompletedReference(transaction.referenceCode ?? transaction.id);
       recordTransaction(transaction)
         .then(order => {
           updateTransactionSync(transaction.id, {
