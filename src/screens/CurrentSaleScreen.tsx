@@ -29,6 +29,7 @@ export function CurrentSaleScreen() {
     state,
     subtotal,
     tax,
+    taxLines,
     total,
     saleItemCount,
     updateCartItemQuantity,
@@ -100,45 +101,73 @@ export function CurrentSaleScreen() {
           style={styles.itemsArea}
           contentContainerStyle={styles.itemsAreaContent}
           showsVerticalScrollIndicator={false}>
-          {state.cart.map(item => (
-            <View key={item.id} style={styles.saleItemBlock}>
-              <View style={styles.saleLine}>
-                <Text style={[styles.saleItemName, { color: theme.colors.text }]}>
-                  {item.title}
-                </Text>
-                <Text style={[styles.saleItemPrice, { color: theme.colors.text }]}>
-                  {formatCurrency(item.unitPriceInCents * item.quantity)}
-                </Text>
-              </View>
-              {item.note ? (
-                <Text style={[styles.saleItemNote, { color: theme.colors.textMuted }]}>
-                  {item.note}
-                </Text>
-              ) : null}
-              <View style={styles.itemToolsRow}>
-                <View style={styles.qtyTools}>
-                  <Pressable
-                    onPress={() => updateCartItemQuantity(item.id, item.quantity - 1)}
-                    style={[styles.qtyButton, { backgroundColor: theme.colors.surfaceMuted }]}>
-                    <MaterialDesignIcons color={theme.colors.text} name="minus" size={18} />
-                  </Pressable>
-                  <Text style={[styles.qtyText, { color: theme.colors.text }]}>
-                    {item.quantity}
+          {state.cart.map(item => {
+            const isMassItem = item.metadata?.soldByMass;
+            const massUnit = item.metadata?.massUnit ?? 'kg';
+            const massSummary = `${item.quantity} ${massUnit} @ ${formatCurrency(
+              item.unitPriceInCents,
+            )}/${massUnit}`;
+            const massExtraNote = item.note
+              ?.split('\n')
+              .filter(line => line.trim() && line.trim() !== massSummary)
+              .join('\n');
+            return (
+              <View key={item.id} style={styles.saleItemBlock}>
+                <View style={styles.saleLine}>
+                  <Text style={[styles.saleItemName, { color: theme.colors.text }]}>
+                    {item.title}
                   </Text>
-                  <Pressable
-                    onPress={() => updateCartItemQuantity(item.id, item.quantity + 1)}
-                    style={[styles.qtyButton, { backgroundColor: theme.colors.surfaceMuted }]}>
-                    <MaterialDesignIcons color={theme.colors.text} name="plus" size={18} />
+                  <Text style={[styles.saleItemPrice, { color: theme.colors.text }]}>
+                    {formatCurrency(item.unitPriceInCents * item.quantity)}
+                  </Text>
+                </View>
+                {isMassItem ? (
+                  <>
+                    <Text style={[styles.saleItemNote, { color: theme.colors.textMuted }]}>
+                      {massSummary}
+                    </Text>
+                    {massExtraNote ? (
+                      <Text style={[styles.saleItemNote, { color: theme.colors.textMuted }]}>
+                        {massExtraNote}
+                      </Text>
+                    ) : null}
+                  </>
+                ) : item.note ? (
+                  <Text style={[styles.saleItemNote, { color: theme.colors.textMuted }]}>
+                    {item.note}
+                  </Text>
+                ) : null}
+                <View style={styles.itemToolsRow}>
+                  {isMassItem ? (
+                    <Text style={[styles.qtyText, { color: theme.colors.text }]}>
+                      {item.quantity} {massUnit}
+                    </Text>
+                  ) : (
+                    <View style={styles.qtyTools}>
+                      <Pressable
+                        onPress={() => updateCartItemQuantity(item.id, item.quantity - 1)}
+                        style={[styles.qtyButton, { backgroundColor: theme.colors.surfaceMuted }]}>
+                        <MaterialDesignIcons color={theme.colors.text} name="minus" size={18} />
+                      </Pressable>
+                      <Text style={[styles.qtyText, { color: theme.colors.text }]}>
+                        {item.quantity}
+                      </Text>
+                      <Pressable
+                        onPress={() => updateCartItemQuantity(item.id, item.quantity + 1)}
+                        style={[styles.qtyButton, { backgroundColor: theme.colors.surfaceMuted }]}>
+                        <MaterialDesignIcons color={theme.colors.text} name="plus" size={18} />
+                      </Pressable>
+                    </View>
+                  )}
+                  <Pressable onPress={() => removeCartItem(item.id)}>
+                    <Text style={[styles.removeText, { color: theme.colors.textMuted }]}>
+                      Remove
+                    </Text>
                   </Pressable>
                 </View>
-                <Pressable onPress={() => removeCartItem(item.id)}>
-                  <Text style={[styles.removeText, { color: theme.colors.textMuted }]}>
-                    Remove
-                  </Text>
-                </Pressable>
               </View>
-            </View>
-          ))}
+            );
+          })}
 
           <View style={[styles.thinDivider, { backgroundColor: theme.colors.divider }]} />
           <Pressable onPress={() => navigation.navigate('CheckoutDiscounts')}>
@@ -164,12 +193,25 @@ export function CurrentSaleScreen() {
               {formatCurrency(subtotal)}
             </Text>
           </View>
-          <View style={styles.summaryRow}>
-            <Text style={[styles.summaryText, { color: theme.colors.textMuted }]}>Tax</Text>
-            <Text style={[styles.summaryText, { color: theme.colors.textMuted }]}>
-              {formatCurrency(tax)}
-            </Text>
-          </View>
+          {taxLines.length ? (
+            taxLines.map(taxLine => (
+              <View key={taxLine.taxId} style={styles.summaryRow}>
+                <Text style={[styles.summaryText, { color: theme.colors.textMuted }]}>
+                  {taxLine.name}
+                </Text>
+                <Text style={[styles.summaryText, { color: theme.colors.textMuted }]}>
+                  {formatCurrency(taxLine.amount)}
+                </Text>
+              </View>
+            ))
+          ) : (
+            <View style={styles.summaryRow}>
+              <Text style={[styles.summaryText, { color: theme.colors.textMuted }]}>Tax</Text>
+              <Text style={[styles.summaryText, { color: theme.colors.textMuted }]}>
+                {formatCurrency(tax)}
+              </Text>
+            </View>
+          )}
           <Pressable
             onPress={() => navigation.navigate('MockPayment')}
             style={[styles.chargeButton, { backgroundColor: theme.colors.accent }]}>
@@ -386,6 +428,9 @@ function CustomerSheet({
         note: customer.note,
         stripeCustomerId: customer.stripeCustomerId,
         syncStatus: customer.syncStatus ?? 'synced',
+        visitCount: customer.visitCount,
+        totalSpentInCents: customer.totalSpentInCents,
+        lastVisitAt: customer.lastVisitAt,
       }));
 
     return [...localMatches, ...remoteAsCustomers];
@@ -417,7 +462,7 @@ function CustomerSheet({
       ...backendCustomer,
       id: backendCustomer?.id || localCustomer.id,
       name: backendCustomer?.name || localCustomer.name,
-      syncStatus: backendCustomer?.stripeCustomerId ? 'synced' : 'local',
+      syncStatus: backendCustomer ? backendCustomer.syncStatus ?? (backendCustomer.stripeCustomerId ? 'synced' : 'local') : 'failed',
       updatedAt: backendCustomer?.updatedAt || now,
     };
 
@@ -445,7 +490,7 @@ function CustomerSheet({
                 Customer
               </Text>
               <Text style={[styles.customerSheetBody, { color: theme.colors.textMuted }]}>
-                Attach a customer now. Stripe syncs when the backend endpoint exists.
+                Attach a customer to keep their profile and order history synced.
               </Text>
             </View>
             <Pressable
@@ -520,6 +565,11 @@ function CustomerSheet({
                           .filter(Boolean)
                           .join(' • ') || 'No contact info'}
                       </Text>
+                      {customer.visitCount || customer.totalSpentInCents ? (
+                        <Text style={[styles.customerStripeId, { color: theme.colors.textMuted }]}>
+                          {customer.visitCount ?? 0} visits • {formatCurrency(customer.totalSpentInCents ?? 0)} spent
+                        </Text>
+                      ) : null}
                       {customer.stripeCustomerId ? (
                         <Text style={[styles.customerStripeId, { color: theme.colors.success }]}>
                           Stripe linked

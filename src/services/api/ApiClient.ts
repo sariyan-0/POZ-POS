@@ -25,7 +25,7 @@ export interface HealthCheckResult {
     success: true;
     data: {
       status: 'ok';
-      service: 'PowersOfZeroPOS';
+      service: 'OneRegister';
       apiVersion: number;
       [key: string]: unknown;
     };
@@ -53,7 +53,7 @@ function isCompatibleHealthPayload(
   const dataRecord = data as Record<string, unknown>;
   return (
     dataRecord.status === 'ok' &&
-    dataRecord.service === 'PowersOfZeroPOS' &&
+    dataRecord.service === 'OneRegister' &&
     dataRecord.apiVersion === 1
   );
 }
@@ -81,7 +81,7 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
-class HttpResponseError extends Error {
+export class HttpResponseError extends Error {
   readonly status: number;
   readonly payload: unknown;
 
@@ -125,7 +125,7 @@ class ApiClient {
       if (!isCompatibleHealthPayload(payload)) {
         throw new BackendConnectionError(
           'invalid_server',
-          'Server is not a compatible PowersOfZeroPOS backend',
+          'Server is not a compatible OneRegister backend',
         );
       }
 
@@ -146,7 +146,7 @@ class ApiClient {
 
         throw new BackendConnectionError(
           'invalid_server',
-          'Server is not a compatible PowersOfZeroPOS backend',
+          'Server is not a compatible OneRegister backend',
         );
       }
 
@@ -232,7 +232,7 @@ class ApiClient {
     }
 
     const token =
-      typeof authTokenOverride === 'string' && authTokenOverride.trim()
+      authTokenOverride !== undefined
         ? authTokenOverride.trim()
         : (await authCredentialStore.getCredential())?.token;
 

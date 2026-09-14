@@ -88,3 +88,9 @@ jest.mock('@stripe/stripe-terminal-react-native', () => {
     })),
   };
 });
+
+jest.mock('react-native-data-scanner', () => ({
+  DataScanner: {
+    scanBarcode: jest.fn(async () => ({ format: 'qr', value: 'TEST-CODE' })),
+  },
+}));

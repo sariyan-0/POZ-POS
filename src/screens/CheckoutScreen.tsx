@@ -69,7 +69,8 @@ export function CheckoutScreen() {
     addProductToCart,
     addCustomAmountToCart,
     addDiscountToCart,
-    authorizeManagerPin,
+    authorizePermissionPin,
+    hasPermission,
   } = usePOS();
   const [tab, setTab] = useState<CheckoutTab>('keypad');
   const [search, setSearch] = useState('');
@@ -81,6 +82,7 @@ export function CheckoutScreen() {
   const [customizingProduct, setCustomizingProduct] = useState<Product | null>(null);
   const [customizationNote, setCustomizationNote] = useState('');
   const [customizationQuantity, setCustomizationQuantity] = useState(1);
+  const [customizationMassText, setCustomizationMassText] = useState('');
   const [selectedOptionValueIds, setSelectedOptionValueIds] = useState<Record<string, string>>({});
   const [selectedModifierIds, setSelectedModifierIds] = useState<string[]>([]);
   const [restrictedDiscount, setRestrictedDiscount] = useState<Discount | null>(null);
@@ -148,6 +150,9 @@ export function CheckoutScreen() {
     [customizingProduct, state.modifierSets],
   );
   const customizationHasOptions = !!customizingProduct?.optionSets?.length;
+  const customizationIsMass = customizingProduct?.unitType === 'mass';
+  const customizationMassUnit = customizingProduct?.massUnit ?? 'kg';
+  const customizationMassQuantity = Number.parseFloat(customizationMassText || '0') || 0;
   const selectedCustomizationOptions = useMemo(() => {
     if (!customizingProduct?.optionSets?.length) {
       return [];
@@ -185,9 +190,17 @@ export function CheckoutScreen() {
     (sum, modifier) => sum + modifier.priceAdjustmentInCents,
     0,
   );
+  const customizationUnitPriceInCents =
+    (customizingProduct?.priceInCents ?? 0) + customizationExtraInCents;
+  const customizationLineTotalInCents = customizationIsMass
+    ? Math.round(customizationUnitPriceInCents * customizationMassQuantity)
+    : customizationUnitPriceInCents * customizationQuantity;
   const customizationCanSubmit =
-    !customizationHasOptions ||
-    (customizingProduct?.optionSets ?? []).every(optionSet => !!selectedOptionValueIds[optionSet.id]);
+    (!customizationHasOptions ||
+      (customizingProduct?.optionSets ?? []).every(
+        optionSet => !!selectedOptionValueIds[optionSet.id],
+      )) &&
+    (!customizationIsMass || customizationMassQuantity > 0);
 
   function appendDigit(value: string) {
     setEntryDigits(current => `${current}${value}`.replace(/^0+(?=\d)/, ''));
@@ -236,6 +249,7 @@ export function CheckoutScreen() {
     setCustomizingProduct(product);
     setCustomizationNote('');
     setCustomizationQuantity(1);
+    setCustomizationMassText('');
     setSelectedOptionValueIds({});
     setSelectedModifierIds([]);
   }
@@ -244,12 +258,17 @@ export function CheckoutScreen() {
     setCustomizingProduct(null);
     setCustomizationNote('');
     setCustomizationQuantity(1);
+    setCustomizationMassText('');
     setSelectedOptionValueIds({});
     setSelectedModifierIds([]);
   }
 
   function handleProductPress(product: Product) {
-    if (product.optionSets?.length || product.modifierSetIds?.length) {
+    if (
+      product.unitType === 'mass' ||
+      product.optionSets?.length ||
+      product.modifierSetIds?.length
+    ) {
       openProductCustomizer(product);
       return;
     }
@@ -278,6 +297,14 @@ export function CheckoutScreen() {
       );
     }
 
+    if (customizationIsMass && customizationMassQuantity > 0) {
+      lines.push(
+        `${customizationMassQuantity} ${customizationMassUnit} @ ${formatCurrency(
+          (customizingProduct?.priceInCents ?? 0) + customizationExtraInCents,
+        )}/${customizationMassUnit}`,
+      );
+    }
+
     if (customizationNote.trim()) {
       lines.push(customizationNote.trim());
     }
@@ -291,12 +318,14 @@ export function CheckoutScreen() {
     }
 
     addProductToCart(customizingProduct.id, {
-      quantity: customizationQuantity,
+      quantity: customizationIsMass ? customizationMassQuantity : customizationQuantity,
       unitPriceInCents: customizingProduct.priceInCents + customizationExtraInCents,
       note: buildCustomizationNote(),
       metadata: {
         selectedOptions: selectedCustomizationOptions,
         selectedModifiers: selectedCustomizationModifiers,
+        soldByMass: customizationIsMass,
+        massUnit: customizationIsMass ? customizationMassUnit : undefined,
       },
     });
     closeProductCustomizer();
@@ -317,7 +346,7 @@ export function CheckoutScreen() {
   }
 
   function tryManagerUnlock(candidatePin: string) {
-    const matchedStaff = authorizeManagerPin(candidatePin);
+    const matchedStaff = authorizePermissionPin(candidatePin, 'apply_discounts');
     if (!matchedStaff || !restrictedDiscount) {
       setManagerPin('');
       setDiscountPinError('Wrong PIN.');
@@ -349,7 +378,7 @@ export function CheckoutScreen() {
   }
 
   function handleDiscountPress(discount: Discount) {
-    if (discount.requirePasscode && currentStaff?.role === 'cashier') {
+    if (!hasPermission('apply_discounts', currentStaff) || (discount.requirePasscode && currentStaff?.role === 'cashier')) {
       setRestrictedDiscount(discount);
       setShowDiscountAuth(false);
       setManagerPin('');
@@ -667,7 +696,14 @@ export function CheckoutScreen() {
                             <ListRow
                               key={product.id}
                               label={product.name}
-                              rightLabel={formatCurrency(product.priceInCents, product.currency)}
+                              rightLabel={`${formatCurrency(
+                                product.priceInCents,
+                                product.currency,
+                              )}${
+                                product.unitType === 'mass'
+                                  ? `/${product.massUnit ?? 'kg'}`
+                                  : ''
+                              }`}
                               showChevron={false}
                               compact
                               thumbnail={<Thumbnail product={product} />}
@@ -787,6 +823,52 @@ export function CheckoutScreen() {
               <ScrollView
                 style={{ flex: 1 }}
                 contentContainerStyle={styles.customizerContent}>
+                {customizationIsMass ? (
+                  <View style={styles.customizerSection}>
+                    <View style={styles.customizerSectionHeader}>
+                      <Text style={[styles.customizerSectionTitle, { color: theme.colors.text }]}>
+                        Weight
+                      </Text>
+                      <View
+                        style={[
+                          styles.customizerBadge,
+                          { backgroundColor: theme.colors.surfaceMuted },
+                        ]}>
+                        <Text
+                          style={[
+                            styles.customizerBadgeLabel,
+                            { color: theme.colors.textMuted },
+                          ]}>
+                          {customizationMassUnit}
+                        </Text>
+                      </View>
+                    </View>
+                    <View
+                      style={[
+                        styles.massInputCard,
+                        {
+                          borderColor: theme.colors.border,
+                          backgroundColor: theme.colors.surface,
+                        },
+                      ]}>
+                      <TextInput
+                        value={customizationMassText}
+                        onChangeText={setCustomizationMassText}
+                        placeholder="0.00"
+                        placeholderTextColor={theme.colors.textMuted}
+                        keyboardType="decimal-pad"
+                        style={[styles.massInput, { color: theme.colors.text }]}
+                      />
+                      <Text style={[styles.massUnitLabel, { color: theme.colors.textMuted }]}>
+                        {customizationMassUnit}
+                      </Text>
+                    </View>
+                    <Text style={[styles.massPriceHint, { color: theme.colors.textMuted }]}>
+                      {formatCurrency(customizationUnitPriceInCents)}/{customizationMassUnit}
+                    </Text>
+                  </View>
+                ) : null}
+
                 {(customizingProduct.optionSets ?? []).map(optionSet => (
                   <View key={optionSet.id} style={styles.customizerSection}>
                     <View style={styles.customizerSectionHeader}>
@@ -905,34 +987,52 @@ export function CheckoutScreen() {
                     backgroundColor: theme.colors.surface,
                   },
                 ]}>
-                <View
-                  style={[
-                    styles.quantityPill,
-                    { borderColor: theme.colors.border, backgroundColor: theme.colors.surface },
-                  ]}>
-                  <Pressable
-                    onPress={() => setCustomizationQuantity(current => Math.max(1, current - 1))}
+                {customizationIsMass ? (
+                  <View
                     style={[
-                      styles.quantityButton,
-                      { backgroundColor: theme.colors.surfaceMuted },
+                      styles.massFooterPill,
+                      { borderColor: theme.colors.border, backgroundColor: theme.colors.surface },
                     ]}>
-                    <MaterialDesignIcons color={theme.colors.text} name="minus" size={18} />
-                  </Pressable>
-                  <Text style={[styles.quantityValue, { color: theme.colors.text }]}>
-                    {customizationQuantity}
-                  </Text>
-                  <Pressable
-                    onPress={() => setCustomizationQuantity(current => current + 1)}
+                    <Text style={[styles.massFooterValue, { color: theme.colors.text }]}>
+                      {customizationMassQuantity > 0
+                        ? `${customizationMassQuantity} ${customizationMassUnit}`
+                        : customizationMassUnit}
+                    </Text>
+                  </View>
+                ) : (
+                  <View
                     style={[
-                      styles.quantityButton,
-                      { backgroundColor: theme.colors.surfaceMuted },
+                      styles.quantityPill,
+                      { borderColor: theme.colors.border, backgroundColor: theme.colors.surface },
                     ]}>
-                    <MaterialDesignIcons color={theme.colors.text} name="plus" size={18} />
-                  </Pressable>
-                </View>
+                    <Pressable
+                      onPress={() => setCustomizationQuantity(current => Math.max(1, current - 1))}
+                      style={[
+                        styles.quantityButton,
+                        { backgroundColor: theme.colors.surfaceMuted },
+                      ]}>
+                      <MaterialDesignIcons color={theme.colors.text} name="minus" size={18} />
+                    </Pressable>
+                    <Text style={[styles.quantityValue, { color: theme.colors.text }]}>
+                      {customizationQuantity}
+                    </Text>
+                    <Pressable
+                      onPress={() => setCustomizationQuantity(current => current + 1)}
+                      style={[
+                        styles.quantityButton,
+                        { backgroundColor: theme.colors.surfaceMuted },
+                      ]}>
+                      <MaterialDesignIcons color={theme.colors.text} name="plus" size={18} />
+                    </Pressable>
+                  </View>
+                )}
 
                 <PrimaryPillButton
-                  label={`Done${customizationExtraInCents > 0 ? ` • ${formatCurrency((customizingProduct.priceInCents + customizationExtraInCents) * customizationQuantity)}` : ''}`}
+                  label={`Done${
+                    customizationLineTotalInCents > 0
+                      ? ` • ${formatCurrency(customizationLineTotalInCents)}`
+                      : ''
+                  }`}
                   onPress={submitCustomizedProduct}
                   disabled={!customizationCanSubmit}
                   style={styles.customizerDoneButton}
@@ -1351,6 +1451,29 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlignVertical: 'top',
   },
+  massInputCard: {
+    minHeight: 92,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  massInput: {
+    flex: 1,
+    fontSize: 34,
+    fontWeight: '800',
+    padding: 0,
+  },
+  massUnitLabel: {
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  massPriceHint: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
   customizerFooter: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1381,6 +1504,19 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     minWidth: 24,
     textAlign: 'center',
+  },
+  massFooterPill: {
+    minWidth: 118,
+    height: 54,
+    borderRadius: 27,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+  },
+  massFooterValue: {
+    fontSize: 16,
+    fontWeight: '800',
   },
   customizerDoneButton: {
     flex: 1,

@@ -75,11 +75,13 @@ export function AppScreen({
   children,
   rightSlot,
   contentStyle,
+  refreshControl,
 }: PropsWithChildren<{
   title: string;
   subtitle?: string;
   rightSlot?: React.ReactNode;
   contentStyle?: StyleProp<ViewStyle>;
+  refreshControl?: React.ReactElement;
 }>) {
   const insets = useSafeAreaInsets();
   const theme = useAppTheme();
@@ -91,7 +93,8 @@ export function AppScreen({
         styles.screenContent,
         { paddingTop: insets.top + 18, paddingBottom: insets.bottom + 28 },
         contentStyle,
-      ]}>
+      ]}
+      refreshControl={refreshControl}>
       <View style={styles.headerRow}>
         <View style={styles.headerCopy}>
           <Text style={[styles.screenTitle, { color: theme.colors.text }]}>{title}</Text>

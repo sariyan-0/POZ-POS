@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Modal,
   Pressable,
@@ -10,12 +10,21 @@ import {
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons/static';
 import { useRoute } from '@react-navigation/native';
 import { CardNetworkLogo } from '../components/CardNetworkLogo';
-import { AppScreen, EmptyNotice, ListRow, PrimaryPillButton } from '../components/POSUI';
+import { PinPad } from '../components/PinPad';
+import {
+  AppScreen,
+  EmptyNotice,
+  ListRow,
+  PrimaryPillButton,
+} from '../components/POSUI';
 import { usePOS } from '../hooks/usePOS';
 import { RefundRecord, Transaction } from '../models/pos';
 import { TransactionDetailRoute } from '../navigation/AppNavigator';
-import { createRemoteTerminalRefund } from '../services/api/terminalRefunds';
-import { paymentService } from '../services/payment';
+import {
+  createRemoteTerminalRefund,
+  loadRemoteOrderRefundDetail,
+  RemoteOrderRefundDetail,
+} from '../services/api/terminalRefunds';
 import { useAppStripeTerminal } from '../terminal/StripeTerminalProvider';
 import { useAppTheme } from '../theme';
 import { createId } from '../utils/id';
@@ -30,7 +39,7 @@ type RefundStep =
   | 'success'
   | 'failed';
 
-type RefundAmountMode = 'full' | 'amount' | 'percentage';
+type RefundAmountMode = 'full' | 'amount' | 'percentage' | 'items';
 
 type RefundReason = {
   key: string;
@@ -46,7 +55,7 @@ const REFUND_REASONS: RefundReason[] = [
 ];
 
 export function TransactionDetailScreen() {
-  const { state, refundTransaction } = usePOS();
+  const { state, refundTransaction, authorizePermissionPin } = usePOS();
   const route = useRoute<TransactionDetailRoute>();
   const theme = useAppTheme();
   const terminal = useAppStripeTerminal();
@@ -58,9 +67,39 @@ export function TransactionDetailScreen() {
     useState<RefundAmountMode>('full');
   const [customRefundAmount, setCustomRefundAmount] = useState('');
   const [customRefundPercentage, setCustomRefundPercentage] = useState('50');
-  const [selectedReason, setSelectedReason] = useState<string>('customer_request');
+  const [selectedReason, setSelectedReason] =
+    useState<string>('customer_request');
   const [otherReason, setOtherReason] = useState('');
   const [refundError, setRefundError] = useState('');
+  const [managerPin, setManagerPin] = useState('');
+  const [remoteDetail, setRemoteDetail] =
+    useState<RemoteOrderRefundDetail | null>(null);
+  const [remoteDetailError, setRemoteDetailError] = useState('');
+  const [itemQuantities, setItemQuantities] = useState<Record<string, number>>(
+    {},
+  );
+  const [restock, setRestock] = useState(false);
+
+  useEffect(() => {
+    if (!transaction?.serverOrderId) {
+      setRemoteDetail(null);
+      setRemoteDetailError('Sync this transaction before issuing a refund.');
+      return;
+    }
+    loadRemoteOrderRefundDetail(transaction.serverOrderId)
+      .then(detail => {
+        setRemoteDetail(detail);
+        setRemoteDetailError('');
+      })
+      .catch(error => {
+        setRemoteDetail(null);
+        setRemoteDetailError(
+          error instanceof Error
+            ? error.message
+            : 'Unable to load the server transaction.',
+        );
+      });
+  }, [transaction?.serverOrderId]);
 
   const activeReason = useMemo(() => {
     const reason = REFUND_REASONS.find(item => item.key === selectedReason);
@@ -86,34 +125,47 @@ export function TransactionDetailScreen() {
 
   const currentTransaction = transaction;
   const refundedAmount = currentTransaction.refundedAmount ?? 0;
-  const remainingRefundAmount = Math.max(0, currentTransaction.total - refundedAmount);
+  const remainingRefundAmount =
+    remoteDetail?.refundableAmountInCents ??
+    Math.max(0, currentTransaction.total - refundedAmount);
   const isAlreadyRefunded = currentTransaction.status === 'refunded';
-  const isStripeTransaction = currentTransaction.paymentProvider === 'stripe_terminal';
   const stripeRefundAlreadyCompleted =
     isAlreadyRefunded && hasStripeRefundRecord(currentTransaction);
-  const isLocalRecordOnlyRefundAgain =
-    isAlreadyRefunded && !isStripeTransaction;
-  const canAttemptStripeRefundAgain =
-    isAlreadyRefunded && isStripeTransaction && !stripeRefundAlreadyCompleted;
-  const refundAmount = isLocalRecordOnlyRefundAgain || canAttemptStripeRefundAgain
-    ? currentTransaction.total
-    : remainingRefundAmount;
-  const remainingAmount = Math.max(0, currentTransaction.total - refundedAmount);
+  const isLocalRecordOnlyRefundAgain = false;
+  const canAttemptStripeRefundAgain = false;
+  const refundAmount = remainingRefundAmount;
+  const remainingAmount = Math.max(
+    0,
+    currentTransaction.total - refundedAmount,
+  );
   const paymentDetails = currentTransaction.paymentDetails;
   const isInteracRefund = paymentDetails?.cardPresentType === 'interac_present';
   const usesReaderRefund =
-    isInteracRefund && !isLocalRecordOnlyRefundAgain && !stripeRefundAlreadyCompleted;
-  const selectedRefundAmount = getSelectedRefundAmount({
-    mode: refundAmountMode,
-    maxAmount: refundAmount,
-    customAmount: customRefundAmount,
-    customPercentage: customRefundPercentage,
-  });
+    isInteracRefund &&
+    !isLocalRecordOnlyRefundAgain &&
+    !stripeRefundAlreadyCompleted;
+  const selectedRefundAmount =
+    refundAmountMode === 'items'
+      ? (remoteDetail?.items ?? []).reduce((sum, item) => {
+          const quantity = Math.min(
+            item.quantity,
+            itemQuantities[item.id] ?? 0,
+          );
+          return (
+            sum + Math.round((item.total_in_cents * quantity) / item.quantity)
+          );
+        }, 0)
+      : getSelectedRefundAmount({
+          mode: refundAmountMode,
+          maxAmount: refundAmount,
+          customAmount: customRefundAmount,
+          customPercentage: customRefundPercentage,
+        });
   const canRefund =
     !stripeRefundAlreadyCompleted &&
-    ((currentTransaction.status !== 'refunded' && refundAmount > 0) ||
-      isLocalRecordOnlyRefundAgain ||
-      canAttemptStripeRefundAgain);
+    Boolean(currentTransaction.serverOrderId && remoteDetail) &&
+    currentTransaction.status !== 'refunded' &&
+    refundAmount > 0;
   const canContinueAmount = canRefund && selectedRefundAmount > 0;
   const latestRefund =
     currentTransaction.refundRecords && currentTransaction.refundRecords.length
@@ -125,6 +177,12 @@ export function TransactionDetailScreen() {
       return;
     }
 
+    const approver = authorizePermissionPin(managerPin, 'issue_refunds');
+    if (!approver) {
+      setRefundError('Enter a PIN for someone allowed to issue refunds.');
+      setRefundStep('failed');
+      return;
+    }
     setRefundStep('processing');
     setRefundError('');
 
@@ -135,9 +193,23 @@ export function TransactionDetailScreen() {
         note: selectedReason === 'other' ? otherReason.trim() : undefined,
         isInteracRefund: usesReaderRefund,
         forceLocalRecordOnly: isLocalRecordOnlyRefundAgain,
+        mode: refundAmountMode,
+        items:
+          refundAmountMode === 'items'
+            ? Object.entries(itemQuantities)
+                .filter(([, quantity]) => quantity > 0)
+                .map(([orderItemId, quantity]) => ({ orderItemId, quantity }))
+            : [],
+        restock: refundAmountMode === 'items' && restock,
+        staff: { id: approver.id, name: approver.name },
         terminal,
       });
       refundTransaction(currentTransaction.id, refund);
+      if (currentTransaction.serverOrderId) {
+        loadRemoteOrderRefundDetail(currentTransaction.serverOrderId)
+          .then(setRemoteDetail)
+          .catch(() => undefined);
+      }
       setRefundStep('success');
     } catch (error) {
       setRefundError(error instanceof Error ? error.message : 'Refund failed');
@@ -151,12 +223,18 @@ export function TransactionDetailScreen() {
     }
     setRefundStep('idle');
     setRefundError('');
+    setManagerPin('');
+    setItemQuantities({});
+    setRestock(false);
   }
 
   return (
     <AppScreen
       title="Transaction details"
-      subtitle={`${formatDateTime(currentTransaction.createdAt)} • ${currentTransaction.id}`}>
+      subtitle={`${formatDateTime(currentTransaction.createdAt)} • ${
+        currentTransaction.id
+      }`}
+    >
       <SummaryCard
         transaction={currentTransaction}
         refundedAmount={refundedAmount}
@@ -190,7 +268,8 @@ export function TransactionDetailScreen() {
                 backgroundColor: theme.colors.background,
                 borderColor: theme.colors.border,
               },
-            ]}>
+            ]}
+          >
             <CardNetworkLogo
               brand={getPaymentCardBrand(transaction)}
               fallbackColor={theme.colors.textMuted}
@@ -212,14 +291,41 @@ export function TransactionDetailScreen() {
             Reader: {paymentDetails.readerLabel}
           </Text>
         ) : null}
+        {currentTransaction.cashDetails ? (
+          <View style={{ gap: 6 }}>
+            <DetailText
+              label="Cash received"
+              value={formatCurrency(
+                currentTransaction.cashDetails.receivedInCents,
+                currentTransaction.currency,
+              )}
+            />
+            <DetailText
+              label="Change given"
+              value={formatCurrency(
+                currentTransaction.cashDetails.changeGivenInCents,
+                currentTransaction.currency,
+              )}
+            />
+          </View>
+        ) : null}
       </InfoCard>
 
-      <View style={{ backgroundColor: theme.colors.surface, borderRadius: 18, overflow: 'hidden' }}>
+      <View
+        style={{
+          backgroundColor: theme.colors.surface,
+          borderRadius: 18,
+          overflow: 'hidden',
+        }}
+      >
         {currentTransaction.items.map(item => (
           <ListRow
             key={item.id}
             label={`${item.name} • Qty ${item.quantity}`}
-            rightLabel={formatCurrency(item.unitPriceInCents * item.quantity, currentTransaction.currency)}
+            rightLabel={formatCurrency(
+              item.unitPriceInCents * item.quantity,
+              currentTransaction.currency,
+            )}
             compact
             showChevron={false}
           />
@@ -227,32 +333,81 @@ export function TransactionDetailScreen() {
       </View>
 
       <InfoCard title="Sale information">
-        <DetailText label="Subtotal" value={formatCurrency(currentTransaction.subtotal, currentTransaction.currency)} />
-        <DetailText label="Tax" value={formatCurrency(currentTransaction.tax, currentTransaction.currency)} />
-        <DetailText label="Total" value={formatCurrency(currentTransaction.total, currentTransaction.currency)} />
+        <DetailText
+          label="Subtotal"
+          value={formatCurrency(
+            currentTransaction.subtotal,
+            currentTransaction.currency,
+          )}
+        />
+        {currentTransaction.taxLines?.length ? (
+          currentTransaction.taxLines.map(taxLine => (
+            <DetailText
+              key={taxLine.taxId}
+              label={taxLine.name}
+              value={formatCurrency(
+                taxLine.amount,
+                currentTransaction.currency,
+              )}
+            />
+          ))
+        ) : (
+          <DetailText
+            label="Tax"
+            value={formatCurrency(
+              currentTransaction.tax,
+              currentTransaction.currency,
+            )}
+          />
+        )}
+        <DetailText
+          label="Total"
+          value={formatCurrency(
+            currentTransaction.total,
+            currentTransaction.currency,
+          )}
+        />
         {refundedAmount > 0 ? (
           <>
-            <DetailText label="Refunded" value={formatCurrency(refundedAmount, currentTransaction.currency)} />
-            <DetailText label="Remaining" value={formatCurrency(remainingAmount, currentTransaction.currency)} />
+            <DetailText
+              label="Refunded"
+              value={formatCurrency(
+                refundedAmount,
+                currentTransaction.currency,
+              )}
+            />
+            <DetailText
+              label="Remaining"
+              value={formatCurrency(
+                remainingAmount,
+                currentTransaction.currency,
+              )}
+            />
             {latestRefund ? (
               <DetailText
                 label="Latest refund"
-                value={`${formatDateTime(latestRefund.createdAt)} • ${latestRefund.reason ?? 'Refund'}`}
+                value={`${formatDateTime(latestRefund.createdAt)} • ${
+                  latestRefund.reason ?? 'Refund'
+                }${latestRefund.staff ? ` • ${latestRefund.staff.name}` : ''}`}
               />
             ) : null}
           </>
         ) : null}
         <PrimaryPillButton
           label={
-            stripeRefundAlreadyCompleted
+            !currentTransaction.serverOrderId
+              ? 'Sync before refunding'
+              : remoteDetailError
+              ? 'Refund unavailable'
+              : stripeRefundAlreadyCompleted
               ? 'Stripe refunded'
               : canAttemptStripeRefundAgain
-                ? 'Refund with Stripe'
-                : isLocalRecordOnlyRefundAgain
-                  ? 'Record refund again'
-                  : canRefund
-                    ? 'Refund'
-                    : 'Already refunded'
+              ? 'Refund with Stripe'
+              : isLocalRecordOnlyRefundAgain
+              ? 'Record refund again'
+              : canRefund
+              ? 'Refund'
+              : 'Already refunded'
           }
           disabled={!canRefund}
           onPress={() => {
@@ -263,23 +418,30 @@ export function TransactionDetailScreen() {
         />
       </InfoCard>
 
-      {(paymentDetails?.paymentIntentId ||
-        paymentDetails?.chargeId ||
-        paymentDetails?.stripeCustomerId ||
-        transaction.customer?.stripeCustomerId ||
-        paymentDetails?.terminalLocationId ||
-        transaction.processorReference) ? (
+      {paymentDetails?.paymentIntentId ||
+      paymentDetails?.chargeId ||
+      paymentDetails?.stripeCustomerId ||
+      transaction.customer?.stripeCustomerId ||
+      paymentDetails?.terminalLocationId ||
+      transaction.processorReference ? (
         <InfoCard title="Stripe details">
           {paymentDetails?.paymentIntentId ? (
-            <DetailText label="PaymentIntent" value={paymentDetails.paymentIntentId} />
+            <DetailText
+              label="PaymentIntent"
+              value={paymentDetails.paymentIntentId}
+            />
           ) : null}
           {paymentDetails?.chargeId ? (
             <DetailText label="Charge" value={paymentDetails.chargeId} />
           ) : null}
           {paymentDetails?.terminalLocationId ? (
-            <DetailText label="Location" value={paymentDetails.terminalLocationId} />
+            <DetailText
+              label="Location"
+              value={paymentDetails.terminalLocationId}
+            />
           ) : null}
-          {paymentDetails?.stripeCustomerId || transaction.customer?.stripeCustomerId ? (
+          {paymentDetails?.stripeCustomerId ||
+          transaction.customer?.stripeCustomerId ? (
             <DetailText
               label="Stripe customer"
               value={
@@ -290,7 +452,10 @@ export function TransactionDetailScreen() {
             />
           ) : null}
           {transaction.processorReference ? (
-            <DetailText label="Processor reference" value={transaction.processorReference} />
+            <DetailText
+              label="Processor reference"
+              value={transaction.processorReference}
+            />
           ) : null}
         </InfoCard>
       ) : null}
@@ -313,15 +478,27 @@ export function TransactionDetailScreen() {
         otherReason={otherReason}
         activeReason={activeReason}
         error={refundError}
+        remoteError={remoteDetailError}
+        remoteItems={remoteDetail?.items ?? []}
+        itemQuantities={itemQuantities}
+        restock={restock}
+        managerPin={managerPin}
         onSelectReason={setSelectedReason}
         onSelectAmountMode={setRefundAmountMode}
         onChangeCustomAmount={setCustomRefundAmount}
         onChangeCustomPercentage={setCustomRefundPercentage}
         onChangeOtherReason={setOtherReason}
+        onChangeItemQuantity={(itemId, quantity) =>
+          setItemQuantities(current => ({ ...current, [itemId]: quantity }))
+        }
+        onChangeRestock={setRestock}
+        onChangeManagerPin={setManagerPin}
         onClose={closeRefundFlow}
         onContinueAmount={() => setRefundStep('reason')}
         onContinue={() => setRefundStep('confirm')}
-        onBack={() => setRefundStep(refundStep === 'confirm' ? 'reason' : 'amount')}
+        onBack={() =>
+          setRefundStep(refundStep === 'confirm' ? 'reason' : 'amount')
+        }
         onConfirm={runRefund}
         onDone={closeRefundFlow}
       />
@@ -349,88 +526,97 @@ async function createRefund(
     note?: string;
     isInteracRefund: boolean;
     forceLocalRecordOnly?: boolean;
+    mode: RefundAmountMode;
+    items: Array<{ orderItemId: string; quantity: number }>;
+    restock: boolean;
+    staff: { id: string; name: string };
     terminal: ReturnType<typeof useAppStripeTerminal>;
   },
 ): Promise<RefundRecord> {
   const paymentDetails = transaction.paymentDetails;
   const idempotencyKey = createId('refund-attempt');
-
-  if (input.forceLocalRecordOnly) {
-    return createLocalRefundRecord(input.amount, input.reason, input.note);
+  if (!transaction.serverOrderId) {
+    throw new Error('Sync this transaction before issuing a refund.');
   }
 
-  if (transaction.paymentProvider === 'stripe_terminal' && input.isInteracRefund) {
+  if (
+    transaction.paymentProvider === 'stripe_terminal' &&
+    input.isInteracRefund
+  ) {
     if (!paymentDetails?.chargeId) {
-      throw new Error('This Interac transaction is missing the Stripe charge ID.');
+      throw new Error(
+        'This Interac transaction is missing the Stripe charge ID.',
+      );
     }
     if (!input.terminal.isReaderConnected) {
-      throw new Error('Connect the Stripe Terminal reader before refunding Interac.');
+      throw new Error(
+        'Connect the Stripe Terminal reader before refunding Interac.',
+      );
     }
 
-    const refund = await input.terminal.processInPersonRefund({
+    const terminalRefund = await input.terminal.processInPersonRefund({
       chargeId: paymentDetails.chargeId,
       amount: input.amount,
       currency: transaction.currency,
       reason: input.reason,
       note: input.note,
     });
-
-    return {
-      id: refund.id,
-      processorReference: refund.id,
-      createdAt: new Date().toISOString(),
-      amount: refund.amount ?? input.amount,
-      status: refund.status === 'failed' ? 'failed' : 'succeeded',
-      type: 'in_person',
-      reason: input.reason,
-      note: input.note,
-    };
-  }
-
-  if (transaction.paymentProvider === 'stripe_terminal') {
     const refund = await createRemoteTerminalRefund({
-      paymentIntentId: paymentDetails?.paymentIntentId,
-      chargeId: paymentDetails?.chargeId,
+      orderId: transaction.serverOrderId,
+      mode: input.mode,
       amount: input.amount,
-      currency: transaction.currency,
+      items: input.items,
+      restock: input.restock,
       reason: input.reason,
       note: input.note,
       idempotencyKey,
+      staffId: input.staff.id,
+      providerRefundId: terminalRefund.id,
     });
-
     return {
       id: refund.id,
-      processorReference: refund.id,
+      processorReference: refund.providerReference ?? refund.id,
       createdAt: new Date().toISOString(),
       amount: refund.amount ?? input.amount,
-      status: refund.status === 'pending' ? 'pending' : refund.status === 'failed' ? 'failed' : 'succeeded',
-      type: 'remote',
+      status:
+        refund.status === 'pending'
+          ? 'pending'
+          : refund.status === 'failed'
+          ? 'failed'
+          : 'succeeded',
+      type: 'in_person',
       reason: input.reason,
       note: input.note,
+      staff: input.staff,
     };
   }
 
-  return createLocalRefundRecord(input.amount, input.reason, input.note, transaction.id);
-}
-
-async function createLocalRefundRecord(
-  amount: number,
-  reason: string,
-  note?: string,
-  transactionId?: string,
-): Promise<RefundRecord> {
-  const refund = transactionId
-    ? await paymentService.refundPayment(transactionId)
-    : { refundId: createId('refund-local') };
-
+  const refund = await createRemoteTerminalRefund({
+    orderId: transaction.serverOrderId,
+    mode: input.mode,
+    amount: input.amount,
+    items: input.items,
+    restock: input.restock,
+    reason: input.reason,
+    note: input.note,
+    idempotencyKey,
+    staffId: input.staff.id,
+  });
   return {
-    id: refund.refundId,
+    id: refund.id,
+    processorReference: refund.providerReference ?? refund.id,
     createdAt: new Date().toISOString(),
-    amount,
-    status: 'succeeded',
+    amount: refund.amount ?? input.amount,
+    status:
+      refund.status === 'pending'
+        ? 'pending'
+        : refund.status === 'failed'
+        ? 'failed'
+        : 'succeeded',
     type: 'remote',
-    reason,
-    note,
+    reason: input.reason,
+    note: input.note,
+    staff: input.staff,
   };
 }
 
@@ -452,11 +638,19 @@ function RefundModal({
   otherReason,
   activeReason,
   error,
+  remoteError,
+  remoteItems,
+  itemQuantities,
+  restock,
+  managerPin,
   onSelectReason,
   onSelectAmountMode,
   onChangeCustomAmount,
   onChangeCustomPercentage,
   onChangeOtherReason,
+  onChangeItemQuantity,
+  onChangeRestock,
+  onChangeManagerPin,
   onClose,
   onContinueAmount,
   onContinue,
@@ -481,11 +675,19 @@ function RefundModal({
   otherReason: string;
   activeReason: string;
   error: string;
+  remoteError: string;
+  remoteItems: RemoteOrderRefundDetail['items'];
+  itemQuantities: Record<string, number>;
+  restock: boolean;
+  managerPin: string;
   onSelectReason: (reason: string) => void;
   onSelectAmountMode: (mode: RefundAmountMode) => void;
   onChangeCustomAmount: (amount: string) => void;
   onChangeCustomPercentage: (percentage: string) => void;
   onChangeOtherReason: (reason: string) => void;
+  onChangeItemQuantity: (itemId: string, quantity: number) => void;
+  onChangeRestock: (restock: boolean) => void;
+  onChangeManagerPin: (pin: string) => void;
   onClose: () => void;
   onContinueAmount: () => void;
   onContinue: () => void;
@@ -495,12 +697,30 @@ function RefundModal({
 }) {
   const theme = useAppTheme();
   const visible = step !== 'idle';
-  const canContinue = selectedReason !== 'other' || otherReason.trim().length > 1;
+  const canContinue =
+    selectedReason !== 'other' || otherReason.trim().length > 1;
+  const [showManagerPinPad, setShowManagerPinPad] = useState(false);
+
+  useEffect(() => {
+    if (step !== 'confirm') setShowManagerPinPad(false);
+  }, [step]);
 
   return (
-    <Modal animationType="slide" transparent visible={visible} onRequestClose={onClose}>
-      <View style={[styles.modalScrim, { backgroundColor: theme.colors.overlay }]}>
-        <View style={[styles.refundSheet, { backgroundColor: theme.colors.surface }]}>
+    <Modal
+      animationType="slide"
+      transparent
+      visible={visible}
+      onRequestClose={onClose}
+    >
+      <View
+        style={[styles.modalScrim, { backgroundColor: theme.colors.overlay }]}
+      >
+        <View
+          style={[
+            styles.refundSheet,
+            { backgroundColor: theme.colors.surface },
+          ]}
+        >
           <View style={styles.sheetHandle} />
           {step === 'amount' ? (
             <>
@@ -510,8 +730,11 @@ function RefundModal({
                   isLocalRecordOnlyRefundAgain
                     ? 'This transaction was already refunded. This adds another local record only and will not contact Stripe.'
                     : isAlreadyRefunded
-                      ? 'This transaction is already marked refunded locally. This will still attempt a real Stripe refund.'
-                    : `${formatCurrency(maxAmount, transaction.currency)} is available to refund.`
+                    ? 'This transaction is already marked refunded locally. This will still attempt a real Stripe refund.'
+                    : `${formatCurrency(
+                        maxAmount,
+                        transaction.currency,
+                      )} is available to refund.`
                 }
               />
               <View style={styles.reasonStack}>
@@ -523,9 +746,11 @@ function RefundModal({
                 />
                 <RefundAmountOption
                   label="Refund by amount"
-                  value={refundAmountMode === 'amount' && amount > 0
-                    ? formatCurrency(amount, transaction.currency)
-                    : 'Enter custom amount'}
+                  value={
+                    refundAmountMode === 'amount' && amount > 0
+                      ? formatCurrency(amount, transaction.currency)
+                      : 'Enter custom amount'
+                  }
                   selected={refundAmountMode === 'amount'}
                   onPress={() => onSelectAmountMode('amount')}
                 />
@@ -548,9 +773,14 @@ function RefundModal({
                 ) : null}
                 <RefundAmountOption
                   label="Refund by percentage"
-                  value={refundAmountMode === 'percentage' && amount > 0
-                    ? `${customRefundPercentage || '0'}% • ${formatCurrency(amount, transaction.currency)}`
-                    : 'Enter percent'}
+                  value={
+                    refundAmountMode === 'percentage' && amount > 0
+                      ? `${customRefundPercentage || '0'}% • ${formatCurrency(
+                          amount,
+                          transaction.currency,
+                        )}`
+                      : 'Enter percent'
+                  }
                   selected={refundAmountMode === 'percentage'}
                   onPress={() => onSelectAmountMode('percentage')}
                 />
@@ -571,6 +801,124 @@ function RefundModal({
                     ]}
                   />
                 ) : null}
+                <RefundAmountOption
+                  label="Choose items"
+                  value={
+                    refundAmountMode === 'items' && amount > 0
+                      ? formatCurrency(amount, transaction.currency)
+                      : 'Select returned quantities'
+                  }
+                  selected={refundAmountMode === 'items'}
+                  onPress={() => onSelectAmountMode('items')}
+                />
+                {refundAmountMode === 'items' ? (
+                  <View style={styles.refundItemStack}>
+                    {remoteItems.map(item => (
+                      <View
+                        key={item.id}
+                        style={[
+                          styles.refundItemRow,
+                          { borderColor: theme.colors.border },
+                        ]}
+                      >
+                        <View style={styles.amountOptionText}>
+                          <Text
+                            style={[
+                              styles.reasonLabel,
+                              { color: theme.colors.text },
+                            ]}
+                          >
+                            {item.product_name}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.amountOptionValue,
+                              { color: theme.colors.textMuted },
+                            ]}
+                          >
+                            {item.quantity} sold ·{' '}
+                            {formatCurrency(
+                              item.total_in_cents,
+                              transaction.currency,
+                            )}
+                          </Text>
+                        </View>
+                        <TextInput
+                          value={String(itemQuantities[item.id] ?? 0)}
+                          onChangeText={value =>
+                            onChangeItemQuantity(
+                              item.id,
+                              Math.max(
+                                0,
+                                Math.min(item.quantity, Number(value) || 0),
+                              ),
+                            )
+                          }
+                          keyboardType="decimal-pad"
+                          style={[
+                            styles.refundQuantityInput,
+                            {
+                              backgroundColor: theme.colors.background,
+                              borderColor: theme.colors.border,
+                              color: theme.colors.text,
+                            },
+                          ]}
+                        />
+                      </View>
+                    ))}
+                    <Pressable
+                      onPress={() => onChangeRestock(!restock)}
+                      style={[
+                        styles.restockOption,
+                        {
+                          borderColor: restock
+                            ? theme.colors.success
+                            : theme.colors.border,
+                          backgroundColor: theme.colors.background,
+                        },
+                      ]}
+                    >
+                      <MaterialDesignIcons
+                        color={
+                          restock
+                            ? theme.colors.success
+                            : theme.colors.textMuted
+                        }
+                        name={
+                          restock
+                            ? 'checkbox-marked-circle'
+                            : 'checkbox-blank-circle-outline'
+                        }
+                        size={22}
+                      />
+                      <View>
+                        <Text
+                          style={[
+                            styles.reasonLabel,
+                            { color: theme.colors.text },
+                          ]}
+                        >
+                          Return to inventory
+                        </Text>
+                        <Text
+                          style={[
+                            styles.amountOptionValue,
+                            { color: theme.colors.textMuted },
+                          ]}
+                        >
+                          Only for sellable items physically returned.
+                        </Text>
+                      </View>
+                    </Pressable>
+                  </View>
+                ) : null}
+                {remoteError ? (
+                  <Text
+                    style={[styles.refundBody, { color: theme.colors.danger }]}
+                  >
+                    {remoteError}
+                  </Text>
+                ) : null}
               </View>
               <SheetActions
                 primaryLabel="Choose reason"
@@ -586,7 +934,10 @@ function RefundModal({
             <>
               <RefundHeader
                 title="Refund reason"
-                body={`${formatCurrency(amount, transaction.currency)} will be refunded.`}
+                body={`${formatCurrency(
+                  amount,
+                  transaction.currency,
+                )} will be refunded.`}
               />
               <View style={styles.reasonStack}>
                 {REFUND_REASONS.map(reason => {
@@ -601,10 +952,18 @@ function RefundModal({
                           backgroundColor: selected
                             ? theme.colors.surfaceMuted
                             : theme.colors.background,
-                          borderColor: selected ? theme.colors.success : theme.colors.border,
+                          borderColor: selected
+                            ? theme.colors.success
+                            : theme.colors.border,
                         },
-                      ]}>
-                      <Text style={[styles.reasonLabel, { color: theme.colors.text }]}>
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.reasonLabel,
+                          { color: theme.colors.text },
+                        ]}
+                      >
                         {reason.label}
                       </Text>
                       {selected ? (
@@ -656,8 +1015,16 @@ function RefundModal({
                     : 'This will send the refund request to Stripe.'
                 }
               />
-              <View style={[styles.confirmCard, { backgroundColor: theme.colors.background }]}>
-                <DetailText label="Amount" value={formatCurrency(amount, transaction.currency)} />
+              <View
+                style={[
+                  styles.confirmCard,
+                  { backgroundColor: theme.colors.background },
+                ]}
+              >
+                <DetailText
+                  label="Amount"
+                  value={formatCurrency(amount, transaction.currency)}
+                />
                 <DetailText label="Reason" value={activeReason} />
                 <DetailText
                   label="Refund type"
@@ -665,20 +1032,74 @@ function RefundModal({
                     isLocalRecordOnlyRefundAgain
                       ? 'Local record only'
                       : usesReaderRefund
-                        ? 'In-person card refund'
-                        : 'Remote refund'
+                      ? 'In-person card refund'
+                      : 'Remote refund'
                   }
                 />
               </View>
+              <Pressable
+                onPress={() => setShowManagerPinPad(true)}
+                style={({ pressed }) => [
+                  styles.pinLauncher,
+                  {
+                    backgroundColor: theme.colors.background,
+                    borderColor: theme.colors.border,
+                    transform: [{ scale: pressed ? 0.985 : 1 }],
+                  },
+                ]}
+              >
+                <View style={styles.pinLauncherCopy}>
+                  <Text
+                    style={[
+                      styles.pinLauncherTitle,
+                      { color: theme.colors.text },
+                    ]}
+                  >
+                    Manager approval
+                  </Text>
+                  <Text
+                    style={[
+                      styles.pinLauncherHint,
+                      { color: theme.colors.textMuted },
+                    ]}
+                  >
+                    {managerPin.length === 4
+                      ? 'PIN entered'
+                      : 'Open the secure PIN pad'}
+                  </Text>
+                </View>
+                <View style={styles.pinLauncherDots}>
+                  {Array.from({ length: 4 }).map((_, index) => (
+                    <View
+                      key={index}
+                      style={[
+                        styles.pinLauncherDot,
+                        {
+                          backgroundColor:
+                            index < managerPin.length
+                              ? theme.colors.text
+                              : theme.colors.border,
+                        },
+                      ]}
+                    />
+                  ))}
+                </View>
+                <MaterialDesignIcons
+                  name="dialpad"
+                  size={22}
+                  color={theme.colors.text}
+                />
+              </Pressable>
               <SheetActions
                 primaryLabel={
                   isLocalRecordOnlyRefundAgain
                     ? 'Record refund'
                     : usesReaderRefund
-                      ? 'Start reader refund'
-                      : 'Refund now'
+                    ? 'Start reader refund'
+                    : 'Refund now'
                 }
                 secondaryLabel="Back"
+                primaryDisabled={managerPin.length !== 4}
                 onPrimary={onConfirm}
                 onSecondary={onBack}
               />
@@ -689,7 +1110,9 @@ function RefundModal({
             <>
               <RefundStatusIcon />
               <RefundHeader
-                title={usesReaderRefund ? 'Waiting for card' : 'Processing refund'}
+                title={
+                  usesReaderRefund ? 'Waiting for card' : 'Processing refund'
+                }
                 body={
                   isLocalRecordOnlyRefundAgain
                     ? 'Saving a local refund record.'
@@ -699,19 +1122,36 @@ function RefundModal({
                 }
               />
               {usesReaderRefund ? (
-                <View style={[styles.readerPromptCard, { backgroundColor: theme.colors.background }]}>
+                <View
+                  style={[
+                    styles.readerPromptCard,
+                    { backgroundColor: theme.colors.background },
+                  ]}
+                >
                   <MaterialDesignIcons
                     color={theme.colors.success}
                     name="contactless-payment"
                     size={24}
                   />
                   <View style={styles.readerPromptText}>
-                    <Text style={[styles.readerPromptTitle, { color: theme.colors.text }]}>
-                      {formatReaderPrompt(readerDisplayMessage) || 'Reader is ready'}
+                    <Text
+                      style={[
+                        styles.readerPromptTitle,
+                        { color: theme.colors.text },
+                      ]}
+                    >
+                      {formatReaderPrompt(readerDisplayMessage) ||
+                        'Reader is ready'}
                     </Text>
                     {readerInputOptions?.length ? (
-                      <Text style={[styles.readerPromptBody, { color: theme.colors.textMuted }]}>
-                        Accepting: {readerInputOptions.map(formatReaderPrompt).join(', ')}
+                      <Text
+                        style={[
+                          styles.readerPromptBody,
+                          { color: theme.colors.textMuted },
+                        ]}
+                      >
+                        Accepting:{' '}
+                        {readerInputOptions.map(formatReaderPrompt).join(', ')}
                       </Text>
                     ) : null}
                   </View>
@@ -730,8 +1170,16 @@ function RefundModal({
             <>
               <RefundStatusIcon success />
               <RefundHeader
-                title={isLocalRecordOnlyRefundAgain ? 'Refund recorded' : 'Refund complete'}
-                body={isLocalRecordOnlyRefundAgain ? 'Local record only' : activeReason}
+                title={
+                  isLocalRecordOnlyRefundAgain
+                    ? 'Refund recorded'
+                    : 'Refund complete'
+                }
+                body={
+                  isLocalRecordOnlyRefundAgain
+                    ? 'Local record only'
+                    : activeReason
+                }
               />
               <SheetActions
                 primaryLabel="Done"
@@ -745,7 +1193,10 @@ function RefundModal({
           {step === 'failed' ? (
             <>
               <RefundStatusIcon error />
-              <RefundHeader title="Refund failed" body={error || 'The refund did not complete.'} />
+              <RefundHeader
+                title="Refund failed"
+                body={error || 'The refund did not complete.'}
+              />
               <SheetActions
                 primaryLabel="Try again"
                 secondaryLabel="Close"
@@ -755,6 +1206,34 @@ function RefundModal({
             </>
           ) : null}
         </View>
+        {showManagerPinPad && step === 'confirm' ? (
+          <View
+            style={[
+              styles.pinPadOverlay,
+              { backgroundColor: theme.colors.overlay },
+            ]}
+          >
+            <View
+              style={[
+                styles.pinPadCard,
+                {
+                  backgroundColor: theme.colors.surface,
+                  borderColor: theme.colors.border,
+                },
+              ]}
+            >
+              <PinPad
+                title="Manager PIN"
+                hint="Enter an owner or manager PIN to approve this refund."
+                value={managerPin}
+                onChange={onChangeManagerPin}
+                onCancel={() => setShowManagerPinPad(false)}
+                onSubmit={() => setShowManagerPinPad(false)}
+                submitLabel="Use PIN"
+              />
+            </View>
+          </View>
+        ) : null}
       </View>
     </Modal>
   );
@@ -764,8 +1243,12 @@ function RefundHeader({ title, body }: { title: string; body: string }) {
   const theme = useAppTheme();
   return (
     <View style={styles.refundHeader}>
-      <Text style={[styles.refundTitle, { color: theme.colors.text }]}>{title}</Text>
-      <Text style={[styles.refundBody, { color: theme.colors.textMuted }]}>{body}</Text>
+      <Text style={[styles.refundTitle, { color: theme.colors.text }]}>
+        {title}
+      </Text>
+      <Text style={[styles.refundBody, { color: theme.colors.textMuted }]}>
+        {body}
+      </Text>
     </View>
   );
 }
@@ -793,12 +1276,15 @@ function RefundAmountOption({
             : theme.colors.background,
           borderColor: selected ? theme.colors.success : theme.colors.border,
         },
-      ]}>
+      ]}
+    >
       <View style={styles.amountOptionText}>
         <Text style={[styles.reasonLabel, { color: theme.colors.text }]}>
           {label}
         </Text>
-        <Text style={[styles.amountOptionValue, { color: theme.colors.textMuted }]}>
+        <Text
+          style={[styles.amountOptionValue, { color: theme.colors.textMuted }]}
+        >
           {value}
         </Text>
       </View>
@@ -829,10 +1315,17 @@ function RefundStatusIcon({
         {
           backgroundColor: error ? theme.colors.danger : theme.colors.success,
         },
-      ]}>
+      ]}
+    >
       <MaterialDesignIcons
         color="#FFFFFF"
-        name={error ? 'alert' : success ? 'check-bold' : 'credit-card-refund-outline'}
+        name={
+          error
+            ? 'alert'
+            : success
+            ? 'check-bold'
+            : 'credit-card-refund-outline'
+        }
         size={34}
       />
     </View>
@@ -864,14 +1357,19 @@ function SheetActions({
             backgroundColor: theme.colors.accent,
             opacity: primaryDisabled ? 0.45 : 1,
           },
-        ]}>
-        <Text style={[styles.sheetPrimaryText, { color: theme.colors.accentText }]}>
+        ]}
+      >
+        <Text
+          style={[styles.sheetPrimaryText, { color: theme.colors.accentText }]}
+        >
           {primaryLabel}
         </Text>
       </Pressable>
       {secondaryLabel ? (
         <Pressable onPress={onSecondary} style={styles.sheetSecondary}>
-          <Text style={[styles.sheetSecondaryText, { color: theme.colors.text }]}>
+          <Text
+            style={[styles.sheetSecondaryText, { color: theme.colors.text }]}
+          >
             {secondaryLabel}
           </Text>
         </Pressable>
@@ -892,7 +1390,9 @@ function SummaryCard({
   const theme = useAppTheme();
   return (
     <View style={[styles.card, { backgroundColor: theme.colors.surface }]}>
-      <Text style={[styles.kicker, { color: theme.colors.textMuted }]}>Payment summary</Text>
+      <Text style={[styles.kicker, { color: theme.colors.textMuted }]}>
+        Payment summary
+      </Text>
       <Text style={[styles.summaryAmount, { color: theme.colors.text }]}>
         {formatCurrency(transaction.total, transaction.currency)}
       </Text>
@@ -904,19 +1404,24 @@ function SummaryCard({
       </Text>
       {refundedAmount > 0 ? (
         <Text style={[styles.muted, { color: theme.colors.textMuted }]}>
-          Refunded {formatCurrency(refundedAmount, transaction.currency)} • Remaining{' '}
-          {formatCurrency(remainingAmount, transaction.currency)}
+          Refunded {formatCurrency(refundedAmount, transaction.currency)} •
+          Remaining {formatCurrency(remainingAmount, transaction.currency)}
         </Text>
       ) : null}
     </View>
   );
 }
 
-function InfoCard({ title, children }: React.PropsWithChildren<{ title: string }>) {
+function InfoCard({
+  title,
+  children,
+}: React.PropsWithChildren<{ title: string }>) {
   const theme = useAppTheme();
   return (
     <View style={[styles.card, { backgroundColor: theme.colors.surface }]}>
-      <Text style={[styles.kicker, { color: theme.colors.textMuted }]}>{title}</Text>
+      <Text style={[styles.kicker, { color: theme.colors.textMuted }]}>
+        {title}
+      </Text>
       {children}
     </View>
   );
@@ -935,10 +1440,10 @@ function getDisplayStatus(transaction: Transaction): string {
   return transaction.status === 'partially_refunded'
     ? 'Partially Refunded'
     : transaction.status === 'refunded'
-      ? 'Refunded'
-      : transaction.status === 'approved'
-        ? 'Completed'
-        : transaction.status.charAt(0).toUpperCase() + transaction.status.slice(1);
+    ? 'Refunded'
+    : transaction.status === 'approved'
+    ? 'Completed'
+    : transaction.status.charAt(0).toUpperCase() + transaction.status.slice(1);
 }
 
 function getPaymentMethodLabel(transaction: Transaction): string {
@@ -948,18 +1453,22 @@ function getPaymentMethodLabel(transaction: Transaction): string {
 
   return displayBrand && paymentDetails?.last4
     ? `${displayBrand} •••• ${paymentDetails.last4}`
-    : displayBrand || paymentDetails?.sourceLabel || transaction.paymentMethod.replaceAll('_', ' ');
+    : displayBrand ||
+        paymentDetails?.sourceLabel ||
+        transaction.paymentMethod.replaceAll('_', ' ');
 }
 
-function getPaymentMethodSubLabel(transaction: Transaction): string | undefined {
+function getPaymentMethodSubLabel(
+  transaction: Transaction,
+): string | undefined {
   const paymentDetails = transaction.paymentDetails;
   return (
     paymentDetails?.readerType ||
     (paymentDetails?.cardPresentType === 'interac_present'
       ? 'Interac card-present'
       : paymentDetails?.cardPresentType === 'card_present'
-        ? 'Card-present'
-        : undefined)
+      ? 'Card-present'
+      : undefined)
   );
 }
 
@@ -971,7 +1480,10 @@ function getPaymentCardBrand(transaction: Transaction): string | undefined {
 }
 
 function capitalizeCardBrand(value: string): string {
-  const normalized = value.trim().toLowerCase().replace(/[\s_-]+/g, '');
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '');
   if (normalized === 'amex' || normalized === 'americanexpress') {
     return 'American Express';
   }
@@ -1012,7 +1524,10 @@ function getSelectedRefundAmount({
     return 0;
   }
 
-  return clampRefundAmount(Math.round(maxAmount * (percentage / 100)), maxAmount);
+  return clampRefundAmount(
+    Math.round(maxAmount * (percentage / 100)),
+    maxAmount,
+  );
 }
 
 function parseMoneyToCents(value: string): number {
@@ -1145,10 +1660,72 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
+  refundItemStack: {
+    gap: 8,
+  },
+  refundItemRow: {
+    minHeight: 62,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  refundQuantityInput: {
+    width: 72,
+    height: 42,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    textAlign: 'center',
+    fontWeight: '800',
+  },
+  restockOption: {
+    minHeight: 62,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
   confirmCard: {
     borderRadius: 20,
     padding: 16,
     gap: 8,
+  },
+  pinLauncher: {
+    minHeight: 64,
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  pinLauncherCopy: { flex: 1, gap: 3 },
+  pinLauncherTitle: { fontSize: 15, fontWeight: '900' },
+  pinLauncherHint: { fontSize: 12, lineHeight: 16 },
+  pinLauncherDots: { flexDirection: 'row', gap: 5 },
+  pinLauncherDot: { width: 7, height: 7, borderRadius: 4 },
+  pinPadOverlay: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    justifyContent: 'flex-end',
+    paddingHorizontal: 14,
+    paddingBottom: 16,
+  },
+  pinPadCard: {
+    width: '100%',
+    maxWidth: 430,
+    alignSelf: 'center',
+    borderRadius: 26,
+    borderWidth: 1,
+    padding: 22,
   },
   readerPromptCard: {
     borderRadius: 22,

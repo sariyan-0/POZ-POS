@@ -1,5 +1,9 @@
 import React from 'react';
-import { NavigationContainer, RouteProp, useNavigation } from '@react-navigation/native';
+import {
+  NavigationContainer,
+  RouteProp,
+  useNavigation,
+} from '@react-navigation/native';
 import {
   BottomTabNavigationProp,
   createBottomTabNavigator,
@@ -10,33 +14,37 @@ import {
 } from '@react-navigation/native-stack';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons/static';
 import { useAppTheme } from '../theme';
-import { CheckoutScreen } from '../screens/CheckoutScreen';
-import { InventoryScreen } from '../screens/InventoryScreen';
-import { TransactionsScreen } from '../screens/TransactionsScreen';
-import { SettingsScreen } from '../screens/SettingsScreen';
 import { MockPaymentScreen } from '../screens/MockPaymentScreen';
-import { ProductEditorScreen } from '../screens/ProductEditorScreen';
-import { DiscountEditorScreen } from '../screens/DiscountEditorScreen';
-import { DiscountsScreen } from '../screens/DiscountsScreen';
 import { CheckoutDiscountsScreen } from '../screens/CheckoutDiscountsScreen';
-import { TransactionDetailScreen } from '../screens/TransactionDetailScreen';
 import { MoreScreen } from '../screens/MoreScreen';
-import { MoneyScreen } from '../screens/MoneyScreen';
-import { OrdersScreen } from '../screens/OrdersScreen';
 import { CurrentSaleScreen } from '../screens/CurrentSaleScreen';
-import { MoreSectionScreen } from '../screens/MoreSectionScreen';
-import { BackendSettingsScreen } from '../screens/BackendSettingsScreen';
-import { SecuritySettingsScreen } from '../screens/SecuritySettingsScreen';
 import { AddModifiersScreen } from '../screens/AddModifiersScreen';
-import { ItemSettingsScreen } from '../screens/ItemSettingsScreen';
-import { AllItemsScreen } from '../screens/AllItemsScreen';
-import { ModifiersScreen } from '../screens/ModifiersScreen';
-import { ModifierSetEditorScreen } from '../screens/ModifierSetEditorScreen';
+import {
+  ProtectedAllItems,
+  ProtectedBackend,
+  ProtectedCashPayment,
+  ProtectedCheckout,
+  ProtectedDiscountEditor,
+  ProtectedDiscounts,
+  ProtectedInventory,
+  ProtectedItems,
+  ProtectedModifierEditor,
+  ProtectedModifiers,
+  ProtectedMoney,
+  ProtectedMoreSection,
+  ProtectedOrders,
+  ProtectedProductEditor,
+  ProtectedSecurity,
+  ProtectedSettings,
+  ProtectedTransactionDetail,
+  ProtectedTransactions,
+} from './ProtectedScreens';
 
 export type RootStackParamList = {
   MainTabs: undefined;
   CurrentSale: undefined;
   MockPayment: undefined;
+  CashPayment: undefined;
   ProductEditor: { productId?: string } | undefined;
   DiscountEditor: { discountId?: string } | undefined;
   Discounts: undefined;
@@ -91,40 +99,57 @@ function MainTabs() {
           fontSize: 12,
           fontWeight: '700',
         },
-      }}>
+      }}
+    >
       <Tab.Screen
         name="Checkout"
-        component={CheckoutScreen}
+        component={ProtectedCheckout}
         options={{
           tabBarIcon: ({ color, size }) => (
-            <MaterialDesignIcons color={color} name="view-grid-outline" size={size} />
+            <MaterialDesignIcons
+              color={color}
+              name="view-grid-outline"
+              size={size}
+            />
           ),
         }}
       />
       <Tab.Screen
         name="Transactions"
-        component={TransactionsScreen}
+        component={ProtectedTransactions}
         options={{
           tabBarIcon: ({ color, size }) => (
-            <MaterialDesignIcons color={color} name="swap-horizontal" size={size} />
+            <MaterialDesignIcons
+              color={color}
+              name="swap-horizontal"
+              size={size}
+            />
           ),
         }}
       />
       <Tab.Screen
         name="Money"
-        component={MoneyScreen}
+        component={ProtectedMoney}
         options={{
           tabBarIcon: ({ color, size }) => (
-            <MaterialDesignIcons color={color} name="cash-multiple" size={size} />
+            <MaterialDesignIcons
+              color={color}
+              name="cash-multiple"
+              size={size}
+            />
           ),
         }}
       />
       <Tab.Screen
         name="Orders"
-        component={OrdersScreen}
+        component={ProtectedOrders}
         options={{
           tabBarIcon: ({ color, size }) => (
-            <MaterialDesignIcons color={color} name="receipt-text-outline" size={size} />
+            <MaterialDesignIcons
+              color={color}
+              name="receipt-text-outline"
+              size={size}
+            />
           ),
         }}
       />
@@ -156,7 +181,8 @@ export function AppNavigator() {
           contentStyle: {
             backgroundColor: theme.colors.background,
           },
-        }}>
+        }}
+      >
         <Stack.Screen
           name="MainTabs"
           component={MainTabs}
@@ -178,18 +204,27 @@ export function AppNavigator() {
           options={{ title: 'Payment', presentation: 'modal' }}
         />
         <Stack.Screen
+          name="CashPayment"
+          component={ProtectedCashPayment}
+          options={{
+            headerShown: false,
+            presentation: 'card',
+            animation: 'slide_from_right',
+          }}
+        />
+        <Stack.Screen
           name="ProductEditor"
-          component={ProductEditorScreen}
+          component={ProtectedProductEditor}
           options={{ headerShown: false }}
         />
         <Stack.Screen
           name="DiscountEditor"
-          component={DiscountEditorScreen}
+          component={ProtectedDiscountEditor}
           options={{ headerShown: false }}
         />
         <Stack.Screen
           name="Discounts"
-          component={DiscountsScreen}
+          component={ProtectedDiscounts}
           options={{ headerShown: false }}
         />
         <Stack.Screen
@@ -197,37 +232,45 @@ export function AppNavigator() {
           component={CheckoutDiscountsScreen}
           options={{ headerShown: false }}
         />
-        <Stack.Screen name="Items" component={ItemSettingsScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="AllItems" component={AllItemsScreen} options={{ headerShown: false }} />
+        <Stack.Screen
+          name="Items"
+          component={ProtectedItems}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="AllItems"
+          component={ProtectedAllItems}
+          options={{ headerShown: false }}
+        />
         <Stack.Screen
           name="Modifiers"
-          component={ModifiersScreen}
+          component={ProtectedModifiers}
           options={{ headerShown: false }}
         />
         <Stack.Screen
           name="ModifierSetEditor"
-          component={ModifierSetEditorScreen}
+          component={ProtectedModifierEditor}
           options={{ headerShown: false }}
         />
         <Stack.Screen
           name="Inventory"
-          component={InventoryScreen}
+          component={ProtectedInventory}
           options={{ title: 'Inventory' }}
         />
         <Stack.Screen
           name="Settings"
-          component={SettingsScreen}
+          component={ProtectedSettings}
           options={{ title: 'Settings' }}
         />
         <Stack.Screen
           name="SecuritySettings"
-          component={SecuritySettingsScreen}
+          component={ProtectedSecurity}
           options={{ title: 'Security' }}
         />
         <Stack.Screen
           name="BackendSettings"
-          component={BackendSettingsScreen}
-          options={{ title: 'Backend / Server' }}
+          component={ProtectedBackend}
+          options={{ title: 'Register connection' }}
         />
         <Stack.Screen
           name="AddModifiers"
@@ -236,21 +279,21 @@ export function AppNavigator() {
         />
         <Stack.Screen
           name="MoreSection"
-          component={MoreSectionScreen}
+          component={ProtectedMoreSection}
           options={({ route }) => ({
             title:
               route.params.section === 'hardware'
                 ? 'Readers'
                 : route.params.section === 'taxes'
-                  ? 'Taxes'
-                  : route.params.section === 'appearance'
-                    ? 'Appearance'
-                    : 'Developer',
+                ? 'Taxes'
+                : route.params.section === 'appearance'
+                ? 'Appearance'
+                : 'Developer',
           })}
         />
         <Stack.Screen
           name="TransactionDetail"
-          component={TransactionDetailScreen}
+          component={ProtectedTransactionDetail}
           options={{ title: 'Transaction Details' }}
         />
       </Stack.Navigator>

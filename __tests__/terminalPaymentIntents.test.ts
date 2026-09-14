@@ -48,7 +48,27 @@ describe('terminalPaymentIntents', () => {
         readerConnected: true,
         paymentInFlight: false,
       }),
-    ).toBe('Sale total must be greater than $0.00 before charging.');
+    ).toBe('The minimum card payment is $0.50 CAD.');
+
+    expect(
+      getTerminalPaymentPreconditionError({
+        amountInCents: 49,
+        terminalReady: true,
+        locationId: 'tml_123',
+        readerConnected: true,
+        paymentInFlight: false,
+      }),
+    ).toBe('The minimum card payment is $0.50 CAD.');
+
+    expect(
+      getTerminalPaymentPreconditionError({
+        amountInCents: 50,
+        terminalReady: true,
+        locationId: 'tml_123',
+        readerConnected: true,
+        paymentInFlight: false,
+      }),
+    ).toBeNull();
 
     expect(
       getTerminalPaymentPreconditionError({

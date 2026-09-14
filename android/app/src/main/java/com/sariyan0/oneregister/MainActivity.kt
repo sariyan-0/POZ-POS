@@ -1,4 +1,4 @@
-package com.powersofzeropos
+package com.sariyan0.oneregister
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate

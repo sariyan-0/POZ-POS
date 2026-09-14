@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>PowersOfZeroPOS</string>
+	<string>OneRegister</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -34,15 +34,15 @@
 		<true/>
 	</dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>PowersOfZeroPOS uses Bluetooth to discover and connect to Stripe Terminal readers.</string>
+	<string>OneRegister uses Bluetooth to discover and connect to Stripe Terminal readers.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>PowersOfZeroPOS uses Bluetooth to discover and connect to Stripe Terminal readers.</string>
+	<string>OneRegister uses Bluetooth to discover and connect to Stripe Terminal readers.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>PowersOfZeroPOS uses the camera so you can take product photos for POS tiles.</string>
+	<string>OneRegister uses the camera to scan register activation codes and take product photos.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>PowersOfZeroPOS uses location while in use to discover nearby Stripe Terminal readers.</string>
+	<string>OneRegister uses location while in use to discover nearby Stripe Terminal readers.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>PowersOfZeroPOS uses your photo library so you can choose product photos for POS tiles.</string>
+	<string>OneRegister uses your photo library so you can choose product photos for POS tiles.</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 	<key>UIBackgroundModes</key>

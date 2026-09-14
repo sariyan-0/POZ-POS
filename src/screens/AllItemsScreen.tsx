@@ -1,5 +1,5 @@
-import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect } from 'react';
+import { Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons/static';
 import { AppScreen, EmptyNotice, ListRow, Thumbnail } from '../components/POSUI';
 import { usePOS } from '../hooks/usePOS';
@@ -8,13 +8,33 @@ import { useAppTheme } from '../theme';
 import { formatCurrency } from '../utils/format';
 
 export function AllItemsScreen() {
-  const { state, deactivateProduct } = usePOS();
+  const {
+    state,
+    deactivateProduct,
+    syncCatalog,
+    catalogSyncStatus,
+    catalogSyncError,
+    lastCatalogSyncAt,
+  } = usePOS();
   const navigation = useRootNavigation();
   const theme = useAppTheme();
+
+  useEffect(() => {
+    syncCatalog().catch(() => undefined);
+  }, [syncCatalog]);
 
   return (
     <AppScreen
       title="All items"
+      subtitle={lastCatalogSyncAt ? `Synced ${new Date(lastCatalogSyncAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Pull down to sync with your dashboard.'}
+      refreshControl={
+        <RefreshControl
+          refreshing={catalogSyncStatus === 'syncing'}
+          onRefresh={() => syncCatalog().catch(() => undefined)}
+          tintColor={theme.colors.accent}
+          colors={[theme.colors.accent]}
+        />
+      }
       rightSlot={
         <Pressable
           onPress={() => navigation.navigate('ProductEditor')}
@@ -24,6 +44,12 @@ export function AllItemsScreen() {
           </Text>
         </Pressable>
       }>
+      {catalogSyncError ? (
+        <View style={[styles.syncNotice, { backgroundColor: theme.colors.surfaceMuted }]}>
+          <MaterialDesignIcons color={theme.colors.danger} name="cloud-alert-outline" size={18} />
+          <Text style={[styles.syncNoticeText, { color: theme.colors.text }]}>Showing saved items. Pull down to retry.</Text>
+        </View>
+      ) : null}
       {state.products.length ? (
         <View style={{ backgroundColor: theme.colors.surface }}>
           {state.products.map(product => (
@@ -95,5 +121,19 @@ const styles = StyleSheet.create({
   metaText: {
     fontSize: 12,
     fontWeight: '500',
+  },
+  syncNotice: {
+    minHeight: 48,
+    marginBottom: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+  syncNoticeText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

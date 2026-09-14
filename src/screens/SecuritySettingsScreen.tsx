@@ -4,6 +4,8 @@ import { AppScreen, ListRow } from '../components/POSUI';
 import { usePOS } from '../hooks/usePOS';
 import { StaffMember } from '../models/pos';
 import { useAppTheme } from '../theme';
+import { useDeviceConnection } from '../context/DeviceConnectionProvider';
+import { PinPadField } from '../components/PinPad';
 
 const ROLE_OPTIONS: StaffMember['role'][] = ['owner', 'manager', 'cashier'];
 
@@ -27,7 +29,12 @@ export function SecuritySettingsScreen() {
     createStaffProfile,
     updateStaffProfile,
     deleteStaffProfile,
+    syncStaff,
+    staffSyncStatus,
+    staffSyncError,
+    lastStaffSyncAt,
   } = usePOS();
+  const { connection } = useDeviceConnection();
   const theme = useAppTheme();
   const [currentPin, setCurrentPin] = useState('');
   const [newPin, setNewPin] = useState('');
@@ -53,6 +60,18 @@ export function SecuritySettingsScreen() {
     [state.staffMembers],
   );
   const currentStaffHasPin = !!currentStaff?.pinHash?.trim() && !!currentStaff?.pinSalt?.trim();
+
+  if (connection) {
+    return <AppScreen title="People & security" subtitle="People and permissions are managed from the OneRegister web dashboard.">
+      <View style={[styles.block, { backgroundColor: theme.colors.surface }]}>
+        <Text style={[styles.label, { color: theme.colors.textMuted }]}>Dashboard managed</Text>
+        <Text style={[styles.helper, { color: theme.colors.textMuted }]}>This register receives active people, hashed PIN credentials, and app permissions from {connection.business.name}. Local edits are disabled so every register stays consistent.</Text>
+        {state.staffMembers.filter(member => member.active).map(member => <ListRow key={member.id} label={`${member.name} · ${roleLabel(member.role)}`} icon="account-lock-outline" />)}
+        <Text style={[styles.helper, { color: staffSyncError ? theme.colors.danger : theme.colors.textMuted }]}>{staffSyncError ?? (lastStaffSyncAt ? `Last synced ${new Date(lastStaffSyncAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'People will sync automatically while online.')}</Text>
+        <Pressable disabled={staffSyncStatus === 'syncing'} onPress={() => syncStaff().catch(() => undefined)} style={[styles.button, { backgroundColor: theme.colors.accent }]}><Text style={[styles.buttonLabel, { color: theme.colors.accentText }]}>{staffSyncStatus === 'syncing' ? 'Syncing…' : 'Sync people now'}</Text></Pressable>
+      </View>
+    </AppScreen>;
+  }
 
   function resetProfileForm() {
     setEditingStaffId(null);
@@ -162,69 +181,36 @@ export function SecuritySettingsScreen() {
       <View style={[styles.block, { backgroundColor: theme.colors.surface }]}>
         <Text style={[styles.label, { color: theme.colors.textMuted }]}>Change your PIN</Text>
         {currentStaffHasPin ? (
-          <TextInput
+          <PinPadField
+            label="Current PIN"
             value={currentPin}
-            onChangeText={value => {
+            onChange={value => {
               setCurrentPin(value);
               if (securityMessage) {
                 setSecurityMessage('');
               }
             }}
-            keyboardType="number-pad"
-            secureTextEntry
-            placeholder="Current PIN"
-            placeholderTextColor={theme.colors.textMuted}
-            style={[
-              styles.input,
-              {
-                color: theme.colors.text,
-                borderColor: theme.colors.border,
-                backgroundColor: theme.colors.surfaceMuted,
-              },
-            ]}
           />
         ) : null}
-        <TextInput
+        <PinPadField
+          label="New PIN"
           value={newPin}
-          onChangeText={value => {
+          onChange={value => {
             setNewPin(value);
             if (securityMessage) {
               setSecurityMessage('');
             }
           }}
-          keyboardType="number-pad"
-          secureTextEntry
-          placeholder="New PIN"
-          placeholderTextColor={theme.colors.textMuted}
-          style={[
-            styles.input,
-            {
-              color: theme.colors.text,
-              borderColor: theme.colors.border,
-              backgroundColor: theme.colors.surfaceMuted,
-            },
-          ]}
         />
-        <TextInput
+        <PinPadField
+          label="Confirm new PIN"
           value={confirmPin}
-          onChangeText={value => {
+          onChange={value => {
             setConfirmPin(value);
             if (securityMessage) {
               setSecurityMessage('');
             }
           }}
-          keyboardType="number-pad"
-          secureTextEntry
-          placeholder="Confirm new PIN"
-          placeholderTextColor={theme.colors.textMuted}
-          style={[
-            styles.input,
-            {
-              color: theme.colors.text,
-              borderColor: theme.colors.border,
-              backgroundColor: theme.colors.surfaceMuted,
-            },
-          ]}
         />
         <Text
           style={[
@@ -276,26 +262,15 @@ export function SecuritySettingsScreen() {
           ]}
         />
         {!editingStaff ? (
-          <TextInput
+          <PinPadField
+            label="Staff PIN"
             value={profilePin}
-            onChangeText={value => {
+            onChange={value => {
               setProfilePin(value);
               if (profileMessage) {
                 setProfileMessage('');
               }
             }}
-            keyboardType="number-pad"
-            secureTextEntry
-            placeholder="4 digit PIN"
-            placeholderTextColor={theme.colors.textMuted}
-            style={[
-              styles.input,
-              {
-                color: theme.colors.text,
-                borderColor: theme.colors.border,
-                backgroundColor: theme.colors.surfaceMuted,
-              },
-            ]}
           />
         ) : null}
         <View style={styles.roleOptions}>

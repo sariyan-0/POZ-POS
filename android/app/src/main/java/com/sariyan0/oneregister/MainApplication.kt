@@ -1,4 +1,4 @@
-package com.powersofzeropos
+package com.sariyan0.oneregister
 
 import android.app.Application
 import com.facebook.react.PackageList

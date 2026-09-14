@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BackendConfiguration, isConfiguredBackendUrl, normalizeBackendUrl } from './backend';
+import { BackendConfiguration, DEFAULT_BACKEND_URL, isConfiguredBackendUrl, normalizeBackendUrl } from './backend';
 
 const STORAGE_KEY = 'powers-of-zero-pos/backend-config/v1';
 
@@ -70,7 +70,7 @@ class BackendConfigService {
 
   async getServerUrl(): Promise<string | null> {
     const config = await this.load();
-    return config?.serverUrl ?? null;
+    return config?.serverUrl ?? DEFAULT_BACKEND_URL;
   }
 
   private emit() {
@@ -81,4 +81,3 @@ class BackendConfigService {
 }
 
 export const backendConfigService = new BackendConfigService();
-

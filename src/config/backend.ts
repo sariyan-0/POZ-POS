@@ -2,6 +2,8 @@ export interface BackendConfiguration {
   serverUrl: string;
 }
 
+export const DEFAULT_BACKEND_URL = 'https://or.sariyan0.com';
+
 export type BackendConnectionStatus =
   | 'idle'
   | 'checking'

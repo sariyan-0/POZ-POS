@@ -54,6 +54,8 @@ export type TerminalPaymentReadiness = {
   paymentInFlight: boolean;
 };
 
+export const MINIMUM_TERMINAL_CHARGE_IN_CENTS = 50;
+
 export function getTerminalPaymentPreconditionError(
   input: TerminalPaymentReadiness,
 ): string | null {
@@ -61,8 +63,8 @@ export function getTerminalPaymentPreconditionError(
     return 'Another payment is already processing.';
   }
 
-  if (input.amountInCents <= 0) {
-    return 'Sale total must be greater than $0.00 before charging.';
+  if (input.amountInCents < MINIMUM_TERMINAL_CHARGE_IN_CENTS) {
+    return 'The minimum card payment is $0.50 CAD.';
   }
 
   if (!input.terminalReady) {

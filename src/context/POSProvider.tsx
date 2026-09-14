@@ -2,27 +2,31 @@ import React, {
   createContext,
   PropsWithChildren,
   useContext,
+  useCallback,
   useEffect,
   useMemo,
   useReducer,
+  useRef,
   useState,
 } from 'react';
+import { AppState } from 'react-native';
 import {
   AppearanceMode,
   AppSettings,
   CartItem,
   Customer,
   Discount,
-  DiscountType,
   ModifierSet,
   PaymentMethod,
   POSState,
   Product,
   ProductOptionSet,
-  TaxDefinition,
   RefundRecord,
   StaffMember,
+  StaffPermission,
   StripePaymentDetails,
+  TaxDefinition,
+  TaxLine,
   Transaction,
   TransactionItem,
 } from '../models/pos';
@@ -30,6 +34,16 @@ import { initialPOSState } from '../services/mockData';
 import { loadPOSState, savePOSState } from '../storage/persistence';
 import { createId } from '../utils/id';
 import { createPinCredentials, verifyPin } from '../utils/pin';
+import { fetchCatalog } from '../services/api/catalog';
+import { fetchStaff } from '../services/api/staff';
+import { fetchCustomers } from '../services/api/customers';
+
+const isTestRuntime =
+  (
+    globalThis as typeof globalThis & {
+      process?: { env?: { NODE_ENV?: string } };
+    }
+  ).process?.env?.NODE_ENV === 'test';
 
 type CreateTransactionInput = {
   paymentMethod: PaymentMethod;
@@ -37,6 +51,7 @@ type CreateTransactionInput = {
   paymentProvider?: 'mock' | 'stripe_terminal';
   processorReference?: string;
   paymentDetails?: StripePaymentDetails;
+  cashDetails?: Transaction['cashDetails'];
 };
 
 type POSContextValue = {
@@ -51,6 +66,7 @@ type POSContextValue = {
   saleItemCount: number;
   subtotal: number;
   tax: number;
+  taxLines: TaxLine[];
   total: number;
   selectedCustomer?: Customer;
   addProductToCart: (
@@ -78,8 +94,13 @@ type POSContextValue = {
   upsertDiscount: (discount: Discount) => void;
   upsertCustomer: (customer: Customer) => void;
   selectCustomerForSale: (customerId?: string) => void;
-  updateCustomerStripeId: (customerId: string, stripeCustomerId: string) => void;
-  createApprovedTransaction: (input: CreateTransactionInput) => Transaction | null;
+  updateCustomerStripeId: (
+    customerId: string,
+    stripeCustomerId: string,
+  ) => void;
+  createApprovedTransaction: (
+    input: CreateTransactionInput,
+  ) => Transaction | null;
   refundTransaction: (transactionId: string, refund: RefundRecord) => void;
   updateTaxRate: (taxRate: number) => void;
   upsertTaxDefinition: (tax: TaxDefinition) => void;
@@ -88,6 +109,11 @@ type POSContextValue = {
   updateAppearanceMode: (mode: AppearanceMode) => void;
   unlockWithPin: (pin: string, staffId?: string) => StaffMember | null;
   authorizeManagerPin: (pin: string) => StaffMember | null;
+  authorizePermissionPin: (
+    pin: string,
+    permission: StaffPermission,
+  ) => StaffMember | null;
+  hasPermission: (permission: StaffPermission, staff?: StaffMember) => boolean;
   lockSession: () => void;
   updateCurrentStaffPin: (
     currentPin: string,
@@ -103,7 +129,32 @@ type POSContextValue = {
     name: string;
     role: StaffMember['role'];
   }) => { ok: true } | { ok: false; message: string };
-  deleteStaffProfile: (staffId: string) => { ok: true } | { ok: false; message: string };
+  deleteStaffProfile: (
+    staffId: string,
+  ) => { ok: true } | { ok: false; message: string };
+  catalogSyncStatus: 'idle' | 'syncing' | 'synced' | 'error';
+  catalogSyncError: string | null;
+  lastCatalogSyncAt: string | null;
+  syncCatalog: () => Promise<void>;
+  staffSyncStatus: 'idle' | 'syncing' | 'synced' | 'error';
+  staffSyncError: string | null;
+  lastStaffSyncAt: string | null;
+  syncStaff: () => Promise<void>;
+  customerSyncStatus: 'idle' | 'syncing' | 'synced' | 'error';
+  customerSyncError: string | null;
+  lastCustomerSyncAt: string | null;
+  syncCustomers: () => Promise<void>;
+  updateTransactionSync: (
+    transactionId: string,
+    update: Pick<
+      Transaction,
+      | 'serverSyncStatus'
+      | 'serverOrderId'
+      | 'serverOrderNumber'
+      | 'serverSyncError'
+      | 'syncedAt'
+    >,
+  ) => void;
 };
 
 type POSAction =
@@ -119,9 +170,15 @@ type POSAction =
         metadata?: CartItem['metadata'];
       };
     }
-  | { type: 'addCustomAmountToCart'; payload: { amountInCents: number; note?: string } }
+  | {
+      type: 'addCustomAmountToCart';
+      payload: { amountInCents: number; note?: string };
+    }
   | { type: 'addDiscountToCart'; payload: { item: CartItem } }
-  | { type: 'updateCartItemQuantity'; payload: { itemId: string; quantity: number } }
+  | {
+      type: 'updateCartItemQuantity';
+      payload: { itemId: string; quantity: number };
+    }
   | { type: 'removeCartItem'; payload: { itemId: string } }
   | { type: 'clearCart' }
   | { type: 'upsertProduct'; payload: Product }
@@ -136,7 +193,10 @@ type POSAction =
       payload: { customerId: string; stripeCustomerId: string };
     }
   | { type: 'completeSale'; payload: Transaction }
-  | { type: 'refundTransaction'; payload: { transactionId: string; refund: RefundRecord } }
+  | {
+      type: 'refundTransaction';
+      payload: { transactionId: string; refund: RefundRecord };
+    }
   | { type: 'updateSettings'; payload: AppSettings }
   | { type: 'upsertTaxDefinition'; payload: TaxDefinition }
   | { type: 'deleteTaxDefinition'; payload: { taxId: string } }
@@ -147,25 +207,80 @@ type POSAction =
       payload: { staffId: string; pinHash: string; pinSalt: string };
     }
   | { type: 'upsertStaffProfile'; payload: StaffMember }
-  | { type: 'deactivateStaffProfile'; payload: { staffId: string } };
+  | { type: 'deactivateStaffProfile'; payload: { staffId: string } }
+  | { type: 'reconcileCatalog'; payload: { products: Product[] } }
+  | { type: 'reconcileStaff'; payload: { staff: StaffMember[] } }
+  | { type: 'reconcileCustomers'; payload: { customers: Customer[] } }
+  | {
+      type: 'updateTransactionSync';
+      payload: { transactionId: string; update: Partial<Transaction> };
+    };
 
 const POSContext = createContext<POSContextValue | undefined>(undefined);
 
-function hasConfiguredPin(staffMember: Pick<StaffMember, 'pinHash' | 'pinSalt'>) {
+function hasConfiguredPin(
+  staffMember: Pick<StaffMember, 'pinHash' | 'pinSalt'>,
+) {
   return !!staffMember.pinHash?.trim() && !!staffMember.pinSalt?.trim();
+}
+
+const DEFAULT_STAFF_PERMISSIONS: Record<
+  StaffMember['role'],
+  StaffPermission[]
+> = {
+  owner: [
+    'process_sales',
+    'view_transactions',
+    'apply_discounts',
+    'issue_refunds',
+    'manage_customers',
+    'manage_catalog',
+    'manage_inventory',
+    'view_reports',
+    'manage_register_settings',
+  ],
+  manager: [
+    'process_sales',
+    'view_transactions',
+    'apply_discounts',
+    'issue_refunds',
+    'manage_customers',
+    'manage_catalog',
+    'manage_inventory',
+    'view_reports',
+  ],
+  cashier: ['process_sales', 'view_transactions', 'manage_customers'],
+};
+
+function staffHasPermission(
+  staffMember: StaffMember | undefined,
+  permission: StaffPermission,
+) {
+  return Boolean(
+    staffMember?.active &&
+      (
+        staffMember.permissions ?? DEFAULT_STAFF_PERMISSIONS[staffMember.role]
+      ).includes(permission),
+  );
 }
 
 function normalizeProduct(product: Product): Product {
   return {
     ...product,
     category: product.category || 'Items',
+    unitType: product.unitType === 'mass' ? 'mass' : 'item',
+    massUnit: product.massUnit === 'lb' ? 'lb' : 'kg',
     isFavorite: product.isFavorite ?? false,
     trackInventory: product.trackInventory ?? true,
     taxIds: Array.isArray(product.taxIds) ? product.taxIds : [],
     optionSets: Array.isArray(product.optionSets)
-      ? product.optionSets.map(optionSet => normalizeProductOptionSet(optionSet))
+      ? product.optionSets.map(optionSet =>
+          normalizeProductOptionSet(optionSet),
+        )
       : [],
-    modifierSetIds: Array.isArray(product.modifierSetIds) ? product.modifierSetIds : [],
+    modifierSetIds: Array.isArray(product.modifierSetIds)
+      ? product.modifierSetIds
+      : [],
     imageUri: product.imageUri ?? '',
     imagePlaceholder: product.imagePlaceholder ?? 'PO',
     tileColor: product.tileColor ?? '',
@@ -173,7 +288,15 @@ function normalizeProduct(product: Product): Product {
   };
 }
 
-function normalizeProductOptionSet(optionSet: ProductOptionSet): ProductOptionSet {
+function isServerProductId(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value,
+  );
+}
+
+function normalizeProductOptionSet(
+  optionSet: ProductOptionSet,
+): ProductOptionSet {
   return {
     ...optionSet,
     name: optionSet.name?.trim() || '',
@@ -243,7 +366,11 @@ function normalizeCustomer(customer: Customer): Customer {
     phone: customer.phone?.trim() || undefined,
     note: customer.note?.trim() || undefined,
     stripeCustomerId: customer.stripeCustomerId?.trim() || undefined,
-    syncStatus: customer.syncStatus ?? (customer.stripeCustomerId ? 'synced' : 'local'),
+    syncStatus:
+      customer.syncStatus ?? (customer.stripeCustomerId ? 'synced' : 'local'),
+    visitCount: Math.max(0, customer.visitCount ?? 0),
+    totalSpentInCents: Math.max(0, customer.totalSpentInCents ?? 0),
+    lastVisitAt: customer.lastVisitAt || undefined,
   };
 }
 
@@ -256,6 +383,9 @@ function normalizeStaffMember(staffMember: StaffMember): StaffMember {
       name: entry.name.trim(),
       role: entry.role || 'cashier',
       active: entry.active ?? true,
+      permissions: Array.isArray(entry.permissions)
+        ? entry.permissions
+        : DEFAULT_STAFF_PERMISSIONS[entry.role || 'cashier'],
       pinHash: entry.pinHash,
       pinSalt: entry.pinSalt,
     };
@@ -270,6 +400,7 @@ function normalizeStaffMember(staffMember: StaffMember): StaffMember {
     name: entry.name.trim(),
     role: entry.role || 'cashier',
     active: entry.active ?? true,
+    permissions: DEFAULT_STAFF_PERMISSIONS[entry.role || 'cashier'],
     pinHash: migratedCredentials.pinHash,
     pinSalt: migratedCredentials.pinSalt,
   };
@@ -307,7 +438,8 @@ function normalizeState(state: POSState): POSState {
     CartItem | { productId?: string; quantity?: number }
   >;
 
-  const normalizedStaffMembers = ((state.staffMembers ?? []) as StaffMember[]).length
+  const normalizedStaffMembers = ((state.staffMembers ?? []) as StaffMember[])
+    .length
     ? ((state.staffMembers ?? []) as StaffMember[])
         .map(staffMember => normalizeStaffMember(staffMember))
         .map(staffMember => clearLegacyDefaultOwnerPin(staffMember))
@@ -318,14 +450,17 @@ function normalizeState(state: POSState): POSState {
     staffMember => staffMember.active && hasConfiguredPin(staffMember),
   );
   const fallbackStaffId =
-    normalizedStaffMembers.find(staffMember => staffMember.active && staffMember.role === 'owner')
-      ?.id ?? normalizedStaffMembers.find(staffMember => staffMember.active)?.id;
+    normalizedStaffMembers.find(
+      staffMember => staffMember.active && staffMember.role === 'owner',
+    )?.id ?? normalizedStaffMembers.find(staffMember => staffMember.active)?.id;
 
   return {
     ...state,
-    products: (state.products ?? []).map(product => normalizeProduct(product as Product)),
-    modifierSets: ((state.modifierSets ?? []) as ModifierSet[]).map(modifierSet =>
-      normalizeModifierSet(modifierSet),
+    products: (state.products ?? []).map(product =>
+      normalizeProduct(product as Product),
+    ),
+    modifierSets: ((state.modifierSets ?? []) as ModifierSet[]).map(
+      modifierSet => normalizeModifierSet(modifierSet),
     ),
     discounts: ((state.discounts ?? []) as Discount[]).map(discount =>
       normalizeDiscount(discount),
@@ -338,8 +473,8 @@ function normalizeState(state: POSState): POSState {
       typeof state.currentStaffId === 'string' && state.currentStaffId
         ? state.currentStaffId
         : hasAnyConfiguredPins
-          ? undefined
-          : fallbackStaffId,
+        ? undefined
+        : fallbackStaffId,
     currentCustomerId:
       typeof state.currentCustomerId === 'string'
         ? state.currentCustomerId
@@ -356,7 +491,8 @@ function normalizeState(state: POSState): POSState {
       return {
         id: createId('cart'),
         type: 'product',
-        productId: typeof entry.productId === 'string' ? entry.productId : undefined,
+        productId:
+          typeof entry.productId === 'string' ? entry.productId : undefined,
         title: '',
         quantity: typeof entry.quantity === 'number' ? entry.quantity : 1,
         unitPriceInCents: 0,
@@ -365,6 +501,9 @@ function normalizeState(state: POSState): POSState {
     }),
     transactions: (state.transactions ?? []).map(transaction => ({
       ...transaction,
+      taxLines: Array.isArray(transaction.taxLines)
+        ? (transaction.taxLines as TaxLine[])
+        : undefined,
       refundedAmount:
         typeof transaction.refundedAmount === 'number'
           ? transaction.refundedAmount
@@ -389,7 +528,9 @@ function normalizeState(state: POSState): POSState {
         ...initialPOSState.settings.business,
         ...(state.settings?.business ?? {}),
         taxDefinitions: Array.isArray(state.settings?.business?.taxDefinitions)
-          ? state.settings.business.taxDefinitions.map(tax => normalizeTaxDefinition(tax))
+          ? state.settings.business.taxDefinitions.map(tax =>
+              normalizeTaxDefinition(tax),
+            )
           : initialPOSState.settings.business.taxDefinitions,
       },
       hardware: {
@@ -411,31 +552,73 @@ function roundCurrency(value: number): number {
 }
 
 function calculateCartTotals(state: POSState) {
-  const subtotal = state.cart.reduce((sum, item) => sum + item.unitPriceInCents * item.quantity, 0);
-  const enabledTaxes = state.settings.business.taxDefinitions.filter(tax => tax.enabled);
+  const subtotal = state.cart.reduce(
+    (sum, item) => sum + item.unitPriceInCents * item.quantity,
+    0,
+  );
+  const enabledTaxes = state.settings.business.taxDefinitions.filter(
+    tax => tax.enabled,
+  );
   const defaultTaxRate =
-    enabledTaxes.reduce((sum, tax) => sum + tax.rate, 0) || state.settings.business.defaultTaxRate;
+    enabledTaxes.reduce((sum, tax) => sum + tax.rate, 0) ||
+    state.settings.business.defaultTaxRate;
+  const fallbackTaxes: TaxLine[] = defaultTaxRate
+    ? [
+        {
+          taxId: 'tax-default',
+          name: 'Tax',
+          rate: defaultTaxRate,
+          amount: 0,
+        },
+      ]
+    : [];
+  const taxLinesById = new Map<string, TaxLine>();
 
-  const tax = state.cart.reduce((sum, item) => {
+  function getApplicableTaxes(item: CartItem) {
+    if (item.type === 'product' && item.productId) {
+      const product = state.products.find(entry => entry.id === item.productId);
+      if (product?.taxIds?.length) {
+        return enabledTaxes.filter(tax => product.taxIds?.includes(tax.id));
+      }
+    }
+
+    return enabledTaxes.length ? enabledTaxes : fallbackTaxes;
+  }
+
+  state.cart.forEach(item => {
     if (!item.taxable) {
-      return sum;
+      return;
     }
 
     const itemAmount = item.unitPriceInCents * item.quantity;
+    getApplicableTaxes(item).forEach(taxDef => {
+      const amount = roundCurrency(itemAmount * (taxDef.rate / 100));
+      if (!amount) {
+        return;
+      }
 
-    if (item.type === 'product' && item.productId) {
-      const product = state.products.find(entry => entry.id === item.productId);
-      const applicableRate = product?.taxIds?.length
-        ? enabledTaxes
-            .filter(tax => product.taxIds?.includes(tax.id))
-            .reduce((rateSum, taxDef) => rateSum + taxDef.rate, 0)
-        : defaultTaxRate;
-      return sum + roundCurrency(itemAmount * (applicableRate / 100));
-    }
+      const taxId = 'taxId' in taxDef ? taxDef.taxId : taxDef.id;
+      const existing = taxLinesById.get(taxId);
+      if (existing) {
+        taxLinesById.set(taxId, {
+          ...existing,
+          amount: existing.amount + amount,
+        });
+        return;
+      }
 
-    return sum + roundCurrency(itemAmount * (defaultTaxRate / 100));
-  }, 0);
-  return { subtotal, tax, total: subtotal + tax };
+      taxLinesById.set(taxId, {
+        taxId,
+        name: taxDef.name,
+        rate: taxDef.rate,
+        amount,
+      });
+    });
+  });
+
+  const taxLines = Array.from(taxLinesById.values());
+  const tax = taxLines.reduce((sum, line) => sum + line.amount, 0);
+  return { subtotal, tax, taxLines, total: subtotal + tax };
 }
 
 function calculatePreDiscountTotals(state: POSState) {
@@ -463,6 +646,7 @@ function createTransactionItems(state: POSState): TransactionItem[] {
     unitPriceInCents: item.unitPriceInCents,
     taxable: item.taxable,
     note: item.note,
+    metadata: item.metadata,
   }));
 }
 
@@ -471,7 +655,9 @@ function posReducer(state: POSState, action: POSAction): POSState {
     case 'hydrate':
       return normalizeState(action.payload);
     case 'addProductToCart': {
-      const product = state.products.find(entry => entry.id === action.payload.productId);
+      const product = state.products.find(
+        entry => entry.id === action.payload.productId,
+      );
       if (!product || !product.active) {
         return state;
       }
@@ -479,8 +665,9 @@ function posReducer(state: POSState, action: POSAction): POSState {
         return state;
       }
 
-      const quantity = Math.max(1, action.payload.quantity ?? 1);
-      const unitPriceInCents = action.payload.unitPriceInCents ?? product.priceInCents;
+      const quantity = Math.max(0.001, action.payload.quantity ?? 1);
+      const unitPriceInCents =
+        action.payload.unitPriceInCents ?? product.priceInCents;
       const title = action.payload.title?.trim() || product.name;
       const note = action.payload.note?.trim() || undefined;
       const metadata = action.payload.metadata;
@@ -498,17 +685,23 @@ function posReducer(state: POSState, action: POSAction): POSState {
               item.type === 'product' &&
               item.productId === product.id &&
               !item.note &&
+              !item.metadata?.soldByMass &&
               !item.metadata?.selectedOptions?.length &&
               !item.metadata?.selectedModifiers?.length,
           );
-      const maxQuantity = product.trackInventory ? Math.max(product.inventory, 1) : 999;
+      const maxQuantity = product.trackInventory
+        ? Math.max(product.inventory, 1)
+        : 999;
 
       if (existing) {
         return {
           ...state,
           cart: state.cart.map(item =>
             item.id === existing.id
-              ? { ...item, quantity: Math.min(item.quantity + quantity, maxQuantity) }
+              ? {
+                  ...item,
+                  quantity: Math.min(item.quantity + quantity, maxQuantity),
+                }
               : item,
           ),
         };
@@ -570,7 +763,9 @@ function posReducer(state: POSState, action: POSAction): POSState {
 
             const nextQuantity = Math.max(0, action.payload.quantity);
             if (item.type === 'product' && item.productId) {
-              const product = state.products.find(entry => entry.id === item.productId);
+              const product = state.products.find(
+                entry => entry.id === item.productId,
+              );
               const maxQuantity =
                 product?.trackInventory && product
                   ? Math.max(product.inventory, 0)
@@ -591,7 +786,9 @@ function posReducer(state: POSState, action: POSAction): POSState {
       return { ...state, cart: [], currentCustomerId: undefined };
     case 'upsertProduct': {
       const normalized = normalizeProduct(action.payload);
-      const exists = state.products.some(product => product.id === normalized.id);
+      const exists = state.products.some(
+        product => product.id === normalized.id,
+      );
       return {
         ...state,
         products: exists
@@ -603,7 +800,9 @@ function posReducer(state: POSState, action: POSAction): POSState {
     }
     case 'upsertModifierSet': {
       const normalized = normalizeModifierSet(action.payload);
-      const exists = state.modifierSets.some(modifierSet => modifierSet.id === normalized.id);
+      const exists = state.modifierSets.some(
+        modifierSet => modifierSet.id === normalized.id,
+      );
       return {
         ...state,
         modifierSets: exists
@@ -615,7 +814,9 @@ function posReducer(state: POSState, action: POSAction): POSState {
     }
     case 'upsertDiscount': {
       const normalized = normalizeDiscount(action.payload);
-      const exists = state.discounts.some(discount => discount.id === normalized.id);
+      const exists = state.discounts.some(
+        discount => discount.id === normalized.id,
+      );
       return {
         ...state,
         discounts: exists
@@ -633,14 +834,22 @@ function posReducer(state: POSState, action: POSAction): POSState {
             ? { ...product, active: false }
             : product,
         ),
-        cart: state.cart.filter(item => item.productId !== action.payload.productId),
+        cart: state.cart.filter(
+          item => item.productId !== action.payload.productId,
+        ),
       };
     case 'adjustInventory':
       return {
         ...state,
         products: state.products.map(product =>
           product.id === action.payload.productId
-            ? { ...product, inventory: Math.max(0, product.inventory + action.payload.delta) }
+            ? {
+                ...product,
+                inventory: Math.max(
+                  0,
+                  product.inventory + action.payload.delta,
+                ),
+              }
             : product,
         ),
       };
@@ -649,7 +858,9 @@ function posReducer(state: POSState, action: POSAction): POSState {
       if (!normalized.name) {
         return state;
       }
-      const exists = state.customers.some(customer => customer.id === normalized.id);
+      const exists = state.customers.some(
+        customer => customer.id === normalized.id,
+      );
       return {
         ...state,
         customers: exists
@@ -700,7 +911,10 @@ function posReducer(state: POSState, action: POSAction): POSState {
           }
           return {
             ...product,
-            inventory: Math.max(0, product.inventory - (soldQuantities.get(product.id) ?? 0)),
+            inventory: Math.max(
+              0,
+              product.inventory - (soldQuantities.get(product.id) ?? 0),
+            ),
           };
         }),
         transactions: [action.payload, ...state.transactions],
@@ -710,39 +924,46 @@ function posReducer(state: POSState, action: POSAction): POSState {
       const transaction = state.transactions.find(
         entry => entry.id === action.payload.transactionId,
       );
-      const isRepeatLocalRefund = transaction?.status === 'refunded';
-      if (!transaction || (transaction.status === 'refunded' && !isRepeatLocalRefund)) {
+      if (!transaction) {
         return state;
+      }
+      if (action.payload.refund.status !== 'succeeded') {
+        return {
+          ...state,
+          transactions: state.transactions.map(entry =>
+            entry.id === transaction.id
+              ? {
+                  ...entry,
+                  refundRecords: [
+                    action.payload.refund,
+                    ...(entry.refundRecords ?? []),
+                  ],
+                }
+              : entry,
+          ),
+        };
       }
       const nextRefundedAmount = Math.min(
         transaction.total,
         (transaction.refundedAmount ?? 0) + action.payload.refund.amount,
       );
       const nextStatus =
-        nextRefundedAmount >= transaction.total ? 'refunded' : 'partially_refunded';
-      const shouldRestoreInventory =
-        transaction.status !== 'refunded' && nextStatus === 'refunded';
+        nextRefundedAmount >= transaction.total
+          ? 'refunded'
+          : 'partially_refunded';
 
       return {
         ...state,
-        products: state.products.map(product => {
-          if (!shouldRestoreInventory) {
-            return product;
-          }
-          const refundedQuantity = transaction.items.reduce((sum, item) => {
-            return item.productId === product.id ? sum + item.quantity : sum;
-          }, 0);
-          return refundedQuantity
-            ? { ...product, inventory: product.inventory + refundedQuantity }
-            : product;
-        }),
         transactions: state.transactions.map(entry =>
           entry.id === transaction.id
             ? {
                 ...entry,
                 status: nextStatus,
                 refundedAmount: nextRefundedAmount,
-                refundRecords: [action.payload.refund, ...(entry.refundRecords ?? [])],
+                refundRecords: [
+                  action.payload.refund,
+                  ...(entry.refundRecords ?? []),
+                ],
               }
             : entry,
         ),
@@ -752,7 +973,9 @@ function posReducer(state: POSState, action: POSAction): POSState {
       return { ...state, settings: action.payload };
     case 'upsertTaxDefinition': {
       const normalized = normalizeTaxDefinition(action.payload);
-      const existing = state.settings.business.taxDefinitions.some(tax => tax.id === normalized.id);
+      const existing = state.settings.business.taxDefinitions.some(
+        tax => tax.id === normalized.id,
+      );
       const taxDefinitions = existing
         ? state.settings.business.taxDefinitions.map(tax =>
             tax.id === normalized.id ? normalized : tax,
@@ -780,7 +1003,9 @@ function posReducer(state: POSState, action: POSAction): POSState {
         ...state,
         products: state.products.map(product => ({
           ...product,
-          taxIds: (product.taxIds ?? []).filter(id => id !== action.payload.taxId),
+          taxIds: (product.taxIds ?? []).filter(
+            id => id !== action.payload.taxId,
+          ),
         })),
         settings: {
           ...state.settings,
@@ -825,7 +1050,9 @@ function posReducer(state: POSState, action: POSAction): POSState {
         ...state,
         staffMembers: exists
           ? state.staffMembers.map(staffMember =>
-              staffMember.id === action.payload.id ? action.payload : staffMember,
+              staffMember.id === action.payload.id
+                ? action.payload
+                : staffMember,
             )
           : [...state.staffMembers, action.payload],
       };
@@ -839,7 +1066,75 @@ function posReducer(state: POSState, action: POSAction): POSState {
             : staffMember,
         ),
         currentStaffId:
-          state.currentStaffId === action.payload.staffId ? undefined : state.currentStaffId,
+          state.currentStaffId === action.payload.staffId
+            ? undefined
+            : state.currentStaffId,
+      };
+    case 'reconcileCatalog': {
+      const serverProducts = action.payload.products.map(normalizeProduct);
+      const retainedLocalProducts = state.products.filter(
+        product => !isServerProductId(product.id),
+      );
+      const availableIds = new Set(
+        [...serverProducts, ...retainedLocalProducts].map(
+          product => product.id,
+        ),
+      );
+      return {
+        ...state,
+        products: [...serverProducts, ...retainedLocalProducts],
+        cart: state.cart.filter(
+          item => !item.productId || availableIds.has(item.productId),
+        ),
+      };
+    }
+    case 'reconcileStaff': {
+      const staff = action.payload.staff.map(normalizeStaffMember);
+      return {
+        ...state,
+        staffMembers: staff,
+        currentStaffId: staff.some(
+          member => member.active && member.id === state.currentStaffId,
+        )
+          ? state.currentStaffId
+          : undefined,
+      };
+    }
+    case 'reconcileCustomers': {
+      const serverCustomers = action.payload.customers.map(normalizeCustomer);
+      const serverIds = new Set(serverCustomers.map(customer => customer.id));
+      const serverStripeIds = new Set(
+        serverCustomers.flatMap(customer =>
+          customer.stripeCustomerId ? [customer.stripeCustomerId] : [],
+        ),
+      );
+      const retainedLocal = state.customers.filter(
+        customer =>
+          !serverIds.has(customer.id) &&
+          (!customer.stripeCustomerId ||
+            !serverStripeIds.has(customer.stripeCustomerId)) &&
+          customer.syncStatus !== 'synced',
+      );
+      const availableIds = new Set(
+        [...serverCustomers, ...retainedLocal].map(customer => customer.id),
+      );
+      return {
+        ...state,
+        customers: [...serverCustomers, ...retainedLocal],
+        currentCustomerId:
+          state.currentCustomerId && availableIds.has(state.currentCustomerId)
+            ? state.currentCustomerId
+            : undefined,
+      };
+    }
+    case 'updateTransactionSync':
+      return {
+        ...state,
+        transactions: state.transactions.map(transaction =>
+          transaction.id === action.payload.transactionId
+            ? { ...transaction, ...action.payload.update }
+            : transaction,
+        ),
       };
     default:
       return state;
@@ -849,6 +1144,90 @@ function posReducer(state: POSState, action: POSAction): POSState {
 export function POSProvider({ children }: PropsWithChildren) {
   const [state, dispatch] = useReducer(posReducer, initialPOSState);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [catalogSyncStatus, setCatalogSyncStatus] = useState<
+    'idle' | 'syncing' | 'synced' | 'error'
+  >('idle');
+  const [catalogSyncError, setCatalogSyncError] = useState<string | null>(null);
+  const [lastCatalogSyncAt, setLastCatalogSyncAt] = useState<string | null>(
+    null,
+  );
+  const lastCatalogSyncAtRef = useRef<string | null>(null);
+  const [staffSyncStatus, setStaffSyncStatus] = useState<
+    'idle' | 'syncing' | 'synced' | 'error'
+  >('idle');
+  const [staffSyncError, setStaffSyncError] = useState<string | null>(null);
+  const [lastStaffSyncAt, setLastStaffSyncAt] = useState<string | null>(null);
+  const lastStaffSyncAtRef = useRef<string | null>(null);
+  const [customerSyncStatus, setCustomerSyncStatus] = useState<
+    'idle' | 'syncing' | 'synced' | 'error'
+  >('idle');
+  const [customerSyncError, setCustomerSyncError] = useState<string | null>(
+    null,
+  );
+  const [lastCustomerSyncAt, setLastCustomerSyncAt] = useState<string | null>(
+    null,
+  );
+  const lastCustomerSyncAtRef = useRef<string | null>(null);
+
+  const syncCatalog = useCallback(async () => {
+    setCatalogSyncStatus('syncing');
+    setCatalogSyncError(null);
+    try {
+      const result = await fetchCatalog();
+      dispatch({
+        type: 'reconcileCatalog',
+        payload: { products: result.products },
+      });
+      lastCatalogSyncAtRef.current = result.syncedAt;
+      setLastCatalogSyncAt(result.syncedAt);
+      setCatalogSyncStatus('synced');
+    } catch (error) {
+      setCatalogSyncStatus('error');
+      setCatalogSyncError(
+        error instanceof Error ? error.message : 'Unable to sync items.',
+      );
+      throw error;
+    }
+  }, []);
+
+  const syncStaff = useCallback(async () => {
+    setStaffSyncStatus('syncing');
+    setStaffSyncError(null);
+    try {
+      const result = await fetchStaff();
+      dispatch({ type: 'reconcileStaff', payload: { staff: result.staff } });
+      lastStaffSyncAtRef.current = result.syncedAt;
+      setLastStaffSyncAt(result.syncedAt);
+      setStaffSyncStatus('synced');
+    } catch (error) {
+      setStaffSyncStatus('error');
+      setStaffSyncError(
+        error instanceof Error ? error.message : 'Unable to sync people.',
+      );
+      throw error;
+    }
+  }, []);
+
+  const syncCustomers = useCallback(async () => {
+    setCustomerSyncStatus('syncing');
+    setCustomerSyncError(null);
+    try {
+      const result = await fetchCustomers();
+      dispatch({
+        type: 'reconcileCustomers',
+        payload: { customers: result.customers },
+      });
+      lastCustomerSyncAtRef.current = result.syncedAt;
+      setLastCustomerSyncAt(result.syncedAt);
+      setCustomerSyncStatus('synced');
+    } catch (error) {
+      setCustomerSyncStatus('error');
+      setCustomerSyncError(
+        error instanceof Error ? error.message : 'Unable to sync customers.',
+      );
+      throw error;
+    }
+  }, []);
 
   useEffect(() => {
     async function hydrate() {
@@ -868,7 +1247,39 @@ export function POSProvider({ children }: PropsWithChildren) {
     }
   }, [isHydrated, state]);
 
-  const { subtotal, tax, total } = useMemo(() => calculateCartTotals(state), [state]);
+  useEffect(() => {
+    if (!isHydrated || isTestRuntime) return;
+
+    syncCatalog().catch(() => undefined);
+    syncStaff().catch(() => undefined);
+    syncCustomers().catch(() => undefined);
+    const subscription = AppState.addEventListener('change', nextState => {
+      if (nextState !== 'active') return;
+      const lastSync = lastCatalogSyncAtRef.current
+        ? Date.parse(lastCatalogSyncAtRef.current)
+        : 0;
+      if (!lastSync || Date.now() - lastSync > 60_000) {
+        syncCatalog().catch(() => undefined);
+      }
+      const lastStaffSync = lastStaffSyncAtRef.current
+        ? Date.parse(lastStaffSyncAtRef.current)
+        : 0;
+      if (!lastStaffSync || Date.now() - lastStaffSync > 60_000)
+        syncStaff().catch(() => undefined);
+      const lastCustomerSync = lastCustomerSyncAtRef.current
+        ? Date.parse(lastCustomerSyncAtRef.current)
+        : 0;
+      if (!lastCustomerSync || Date.now() - lastCustomerSync > 60_000)
+        syncCustomers().catch(() => undefined);
+    });
+
+    return () => subscription.remove();
+  }, [isHydrated, syncCatalog, syncCustomers, syncStaff]);
+
+  const { subtotal, tax, taxLines, total } = useMemo(
+    () => calculateCartTotals(state),
+    [state],
+  );
   const saleItemCount = useMemo(
     () => state.cart.reduce((sum, item) => sum + item.quantity, 0),
     [state.cart],
@@ -876,27 +1287,29 @@ export function POSProvider({ children }: PropsWithChildren) {
   const selectedCustomer = useMemo(
     () =>
       state.currentCustomerId
-        ? state.customers.find(customer => customer.id === state.currentCustomerId)
+        ? state.customers.find(
+            customer => customer.id === state.currentCustomerId,
+          )
         : undefined,
     [state.currentCustomerId, state.customers],
   );
-  const currentStaff = useMemo(
-    () => {
-      if (state.currentStaffId) {
-        return state.staffMembers.find(staffMember => staffMember.id === state.currentStaffId);
-      }
-
-      const activeStaffWithoutPins = state.staffMembers.filter(
-        staffMember => staffMember.active && !hasConfiguredPin(staffMember),
+  const currentStaff = useMemo(() => {
+    if (state.currentStaffId) {
+      return state.staffMembers.find(
+        staffMember => staffMember.id === state.currentStaffId,
       );
+    }
 
-      return (
-        activeStaffWithoutPins.find(staffMember => staffMember.role === 'owner') ??
-        activeStaffWithoutPins[0]
-      );
-    },
-    [state.currentStaffId, state.staffMembers],
-  );
+    const activeStaffWithoutPins = state.staffMembers.filter(
+      staffMember => staffMember.active && !hasConfiguredPin(staffMember),
+    );
+
+    return (
+      activeStaffWithoutPins.find(
+        staffMember => staffMember.role === 'owner',
+      ) ?? activeStaffWithoutPins[0]
+    );
+  }, [state.currentStaffId, state.staffMembers]);
 
   const value = useMemo<POSContextValue>(() => {
     return {
@@ -913,30 +1326,58 @@ export function POSProvider({ children }: PropsWithChildren) {
       saleItemCount,
       subtotal,
       tax,
+      taxLines,
       total,
       selectedCustomer,
+      catalogSyncStatus,
+      catalogSyncError,
+      lastCatalogSyncAt,
+      syncCatalog,
+      staffSyncStatus,
+      staffSyncError,
+      lastStaffSyncAt,
+      syncStaff,
+      customerSyncStatus,
+      customerSyncError,
+      lastCustomerSyncAt,
+      syncCustomers,
+      updateTransactionSync: (transactionId, update) =>
+        dispatch({
+          type: 'updateTransactionSync',
+          payload: { transactionId, update },
+        }),
       addProductToCart: (productId, input) =>
-        dispatch({ type: 'addProductToCart', payload: { productId, ...input } }),
+        dispatch({
+          type: 'addProductToCart',
+          payload: { productId, ...input },
+        }),
       addCustomAmountToCart: (amountInCents, note) =>
         dispatch({
           type: 'addCustomAmountToCart',
           payload: { amountInCents, note },
         }),
       addDiscountToCart: (discountId, authorizedByStaffId) => {
-        const discount = state.discounts.find(entry => entry.id === discountId && entry.active);
+        const discount = state.discounts.find(
+          entry => entry.id === discountId && entry.active,
+        );
         if (!discount) {
           return { ok: false, message: 'Discount not found.' };
         }
 
         const baseTotals = calculatePreDiscountTotals(state);
-        const basis = discount.applyAfterTaxes ? baseTotals.total : baseTotals.subtotal;
+        const basis = discount.applyAfterTaxes
+          ? baseTotals.total
+          : baseTotals.subtotal;
         const amountInCents =
           discount.type === 'percentage'
             ? roundCurrency(basis * (discount.amount / 100))
             : roundCurrency(discount.amount);
 
         if (amountInCents <= 0) {
-          return { ok: false, message: 'Discount amount must be greater than zero.' };
+          return {
+            ok: false,
+            message: 'Discount amount must be greater than zero.',
+          };
         }
 
         dispatch({
@@ -961,11 +1402,15 @@ export function POSProvider({ children }: PropsWithChildren) {
         return { ok: true };
       },
       updateCartItemQuantity: (itemId, quantity) =>
-        dispatch({ type: 'updateCartItemQuantity', payload: { itemId, quantity } }),
+        dispatch({
+          type: 'updateCartItemQuantity',
+          payload: { itemId, quantity },
+        }),
       removeCartItem: itemId =>
         dispatch({ type: 'removeCartItem', payload: { itemId } }),
       clearCart: () => dispatch({ type: 'clearCart' }),
-      upsertProduct: product => dispatch({ type: 'upsertProduct', payload: product }),
+      upsertProduct: product =>
+        dispatch({ type: 'upsertProduct', payload: product }),
       upsertModifierSet: modifierSet =>
         dispatch({ type: 'upsertModifierSet', payload: modifierSet }),
       deactivateProduct: productId =>
@@ -989,8 +1434,12 @@ export function POSProvider({ children }: PropsWithChildren) {
         paymentProvider,
         processorReference,
         paymentDetails,
+        cashDetails,
       }) => {
-        if (!state.cart.length) {
+        if (
+          !state.cart.length ||
+          !staffHasPermission(currentStaff, 'process_sales')
+        ) {
           return null;
         }
 
@@ -1000,6 +1449,7 @@ export function POSProvider({ children }: PropsWithChildren) {
           createdAt: new Date().toISOString(),
           subtotal,
           tax,
+          taxLines,
           total,
           currency: state.settings.business.currency,
           paymentMethod,
@@ -1013,12 +1463,21 @@ export function POSProvider({ children }: PropsWithChildren) {
                 email: selectedCustomer.email,
                 phone: selectedCustomer.phone,
                 stripeCustomerId:
-                  paymentDetails?.stripeCustomerId || selectedCustomer.stripeCustomerId,
+                  paymentDetails?.stripeCustomerId ||
+                  selectedCustomer.stripeCustomerId,
               }
             : undefined,
           refundedAmount: 0,
           refundRecords: [],
           paymentDetails,
+          cashDetails:
+            paymentMethod === 'cash'
+              ? cashDetails ?? { receivedInCents: total, changeGivenInCents: 0 }
+              : undefined,
+          staff: currentStaff
+            ? { id: currentStaff.id, name: currentStaff.name }
+            : undefined,
+          serverSyncStatus: 'pending',
           items,
         };
 
@@ -1026,7 +1485,10 @@ export function POSProvider({ children }: PropsWithChildren) {
         return transaction;
       },
       refundTransaction: (transactionId, refund) =>
-        dispatch({ type: 'refundTransaction', payload: { transactionId, refund } }),
+        dispatch({
+          type: 'refundTransaction',
+          payload: { transactionId, refund },
+        }),
       updateTaxRate: taxRate =>
         dispatch({
           type: 'updateSettings',
@@ -1034,7 +1496,10 @@ export function POSProvider({ children }: PropsWithChildren) {
             ...state.settings,
             business: {
               ...state.settings.business,
-              defaultTaxRate: Math.max(0, Number.isFinite(taxRate) ? taxRate : 0),
+              defaultTaxRate: Math.max(
+                0,
+                Number.isFinite(taxRate) ? taxRate : 0,
+              ),
             },
           },
         }),
@@ -1089,7 +1554,7 @@ export function POSProvider({ children }: PropsWithChildren) {
       },
       authorizeManagerPin: pin => {
         const matchedStaff = state.staffMembers.find(staffMember => {
-          if (!staffMember.active || staffMember.role === 'cashier') {
+          if (!staffHasPermission(staffMember, 'issue_refunds')) {
             return false;
           }
           if (!hasConfiguredPin(staffMember)) {
@@ -1103,10 +1568,26 @@ export function POSProvider({ children }: PropsWithChildren) {
         });
         return matchedStaff ?? null;
       },
+      authorizePermissionPin: (pin, permission) =>
+        state.staffMembers.find(
+          staffMember =>
+            staffHasPermission(staffMember, permission) &&
+            hasConfiguredPin(staffMember) &&
+            verifyPin({
+              pin,
+              pinHash: staffMember.pinHash,
+              pinSalt: staffMember.pinSalt,
+            }),
+        ) ?? null,
+      hasPermission: (permission, staffMember = currentStaff) =>
+        staffHasPermission(staffMember, permission),
       lockSession: () => dispatch({ type: 'lockSession' }),
       updateCurrentStaffPin: (currentPin, nextPin) => {
         if (!currentStaff) {
-          return { ok: false, message: 'No staff member is currently signed in.' };
+          return {
+            ok: false,
+            message: 'No staff member is currently signed in.',
+          };
         }
 
         const normalizedCurrentPin = currentPin.trim();
@@ -1158,7 +1639,10 @@ export function POSProvider({ children }: PropsWithChildren) {
             staffMember.name.toLowerCase() === normalizedName.toLowerCase(),
         );
         if (duplicateName) {
-          return { ok: false, message: 'A staff profile with that name already exists.' };
+          return {
+            ok: false,
+            message: 'A staff profile with that name already exists.',
+          };
         }
 
         const credentials = createPinCredentials(normalizedPin);
@@ -1177,7 +1661,9 @@ export function POSProvider({ children }: PropsWithChildren) {
       },
       updateStaffProfile: ({ staffId, name, role }) => {
         const normalizedName = name.trim();
-        const target = state.staffMembers.find(staffMember => staffMember.id === staffId);
+        const target = state.staffMembers.find(
+          staffMember => staffMember.id === staffId,
+        );
 
         if (!target) {
           return { ok: false, message: 'Staff profile not found.' };
@@ -1194,7 +1680,10 @@ export function POSProvider({ children }: PropsWithChildren) {
             staffMember.name.toLowerCase() === normalizedName.toLowerCase(),
         );
         if (duplicateName) {
-          return { ok: false, message: 'Another staff profile already uses that name.' };
+          return {
+            ok: false,
+            message: 'Another staff profile already uses that name.',
+          };
         }
 
         dispatch({
@@ -1208,14 +1697,19 @@ export function POSProvider({ children }: PropsWithChildren) {
         return { ok: true };
       },
       deleteStaffProfile: staffId => {
-        const target = state.staffMembers.find(staffMember => staffMember.id === staffId);
+        const target = state.staffMembers.find(
+          staffMember => staffMember.id === staffId,
+        );
 
         if (!target || !target.active) {
           return { ok: false, message: 'Staff profile not found.' };
         }
 
         if (currentStaff?.id === staffId) {
-          return { ok: false, message: 'You cannot delete the profile that is signed in.' };
+          return {
+            ok: false,
+            message: 'You cannot delete the profile that is signed in.',
+          };
         }
 
         if (target.role === 'owner') {
@@ -1223,7 +1717,10 @@ export function POSProvider({ children }: PropsWithChildren) {
             staffMember => staffMember.active && staffMember.role === 'owner',
           );
           if (activeOwners.length <= 1) {
-            return { ok: false, message: 'You must keep at least one owner profile.' };
+            return {
+              ok: false,
+              message: 'You must keep at least one owner profile.',
+            };
           }
         }
 
@@ -1236,12 +1733,25 @@ export function POSProvider({ children }: PropsWithChildren) {
     };
   }, [
     currentStaff,
+    catalogSyncError,
+    catalogSyncStatus,
     isHydrated,
+    lastCatalogSyncAt,
+    lastStaffSyncAt,
+    staffSyncError,
+    staffSyncStatus,
+    syncCatalog,
+    syncStaff,
+    customerSyncError,
+    customerSyncStatus,
+    lastCustomerSyncAt,
+    syncCustomers,
     saleItemCount,
     selectedCustomer,
     state,
     subtotal,
     tax,
+    taxLines,
     total,
   ]);
 
@@ -1262,6 +1772,8 @@ export function createEmptyProduct(overrides?: Partial<Product>): Product {
     name: '',
     description: '',
     priceInCents: 0,
+    unitType: 'item',
+    massUnit: 'kg',
     currency: 'CAD',
     category: 'Items',
     sku: '',

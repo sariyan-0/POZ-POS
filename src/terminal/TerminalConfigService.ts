@@ -120,6 +120,13 @@ class TerminalConfigService {
     return nextConfig;
   }
 
+  async reset(): Promise<void> {
+    await AsyncStorage.removeItem(STORAGE_KEY);
+    this.config = DEFAULT_TERMINAL_CONFIGURATION;
+    this.hasLoaded = true;
+    this.emit();
+  }
+
   private emit() {
     this.listeners.forEach(listener => {
       listener();

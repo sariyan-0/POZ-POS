@@ -12,7 +12,7 @@ export interface AuthCredentialStore {
   subscribe(listener: () => void): () => void;
 }
 
-const SERVICE_NAME = 'com.powersofzeropos.pos-api-key';
+const SERVICE_NAME = 'com.sariyan0.oneregister.device-token';
 const ACCOUNT_NAME = 'powersofzeropos';
 
 class SecureAuthCredentialStore implements AuthCredentialStore {

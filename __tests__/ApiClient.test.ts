@@ -79,7 +79,7 @@ describe('ApiClient', () => {
         success: true,
         data: {
           status: 'ok',
-          service: 'PowersOfZeroPOS',
+          service: 'OneRegister',
           apiVersion: 1,
         },
       }),
@@ -94,7 +94,7 @@ describe('ApiClient', () => {
         success: true,
         data: {
           status: 'ok',
-          service: 'PowersOfZeroPOS',
+          service: 'OneRegister',
           apiVersion: 1,
         },
       },

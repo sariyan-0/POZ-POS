@@ -1,9 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  Animated,
+  Easing,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons/static';
 import { CardNetworkLogo } from '../components/CardNetworkLogo';
 import { AppScreen } from '../components/POSUI';
-import { CartItem, CurrencyCode, PaymentMethod } from '../models/pos';
+import {
+  CartItem,
+  CurrencyCode,
+  PaymentMethod,
+  Transaction,
+} from '../models/pos';
 import { usePOS } from '../hooks/usePOS';
 import { useRootNavigation } from '../navigation/AppNavigator';
 import {
@@ -15,6 +27,7 @@ import {
 } from '../services/api/terminalPaymentIntents';
 import { paymentService } from '../services/payment';
 import { useAppStripeTerminal } from '../terminal/StripeTerminalProvider';
+import { recordTransaction } from '../services/api/transactions';
 import { useAppTheme } from '../theme';
 import { createId } from '../utils/id';
 import { formatCurrency } from '../utils/format';
@@ -76,7 +89,10 @@ function formatCardBrand(brand: string | undefined): string | null {
     .replace(/\b\w/g, match => match.toUpperCase());
 }
 
-function getBrandAccent(brand: string | undefined, colors: ReturnType<typeof useAppTheme>['colors']) {
+function getBrandAccent(
+  brand: string | undefined,
+  colors: ReturnType<typeof useAppTheme>['colors'],
+) {
   const normalized = brand?.trim().toLowerCase();
 
   if (normalized === 'visa') {
@@ -116,7 +132,10 @@ function getStageFailureCopy(
       };
     case 'collecting_payment_method':
       return {
-        title: method === 'tap_to_pay' ? 'Tap to Pay Failed' : 'Card Collection Failed',
+        title:
+          method === 'tap_to_pay'
+            ? 'Tap to Pay Failed'
+            : 'Card Collection Failed',
         message:
           method === 'tap_to_pay'
             ? 'The app could not collect the customer card or wallet on this device.'
@@ -147,7 +166,9 @@ function getStageFailureCopy(
   }
 }
 
-function mapCartItemToBackendSaleItem(item: CartItem): BackendTerminalPaymentIntentSaleItem {
+function mapCartItemToBackendSaleItem(
+  item: CartItem,
+): BackendTerminalPaymentIntentSaleItem {
   return {
     localCartItemId: item.id,
     type: item.type,
@@ -177,9 +198,13 @@ export function MockPaymentScreen() {
     selectedCustomer,
     createApprovedTransaction,
     updateCustomerStripeId,
+    updateTransactionSync,
+    syncCustomers,
   } = usePOS();
   const terminal = useAppStripeTerminal();
-  const [selectedMethod, setSelectedMethod] = useState<PaymentMethod | null>(null);
+  const [selectedMethod, setSelectedMethod] = useState<PaymentMethod | null>(
+    null,
+  );
   const [phase, setPhase] = useState<PaymentPhase>('select_method');
   const [transactionId, setTransactionId] = useState<string>('');
   const [phaseMessage, setPhaseMessage] = useState<string>('');
@@ -187,7 +212,8 @@ export function MockPaymentScreen() {
   const [failureStageLabel, setFailureStageLabel] = useState<string>('');
   const [debugLines, setDebugLines] = useState<string[]>([]);
   const [guidanceLines, setGuidanceLines] = useState<string[]>([]);
-  const [approvedPayment, setApprovedPayment] = useState<ApprovedPaymentSummary | null>(null);
+  const [approvedPayment, setApprovedPayment] =
+    useState<ApprovedPaymentSummary | null>(null);
   const [paymentAmountCents, setPaymentAmountCents] = useState<number>(total);
   const [paymentCurrency, setPaymentCurrency] = useState<CurrencyCode>(
     state.settings.business.currency,
@@ -199,16 +225,44 @@ export function MockPaymentScreen() {
   const readerPaymentInFlightRef = useRef(false);
   const cancelActivePaymentRef = useRef(terminal.cancelActivePayment);
 
+  function syncRecordedTransaction(transaction: Transaction | null) {
+    if (!transaction) return;
+    recordTransaction(transaction)
+      .then(order => {
+        updateTransactionSync(transaction.id, {
+          serverSyncStatus: 'synced',
+          serverOrderId: order.id,
+          serverOrderNumber: order.order_number,
+          serverSyncError: undefined,
+          syncedAt: new Date().toISOString(),
+        });
+        syncCustomers().catch(() => undefined);
+      })
+      .catch(error => {
+        updateTransactionSync(transaction.id, {
+          serverSyncStatus: 'failed',
+          serverSyncError:
+            error instanceof Error
+              ? error.message
+              : 'Unable to sync transaction.',
+        });
+      });
+  }
+
   const displayAmountCents =
     phase === 'select_method' ? total : paymentAmountCents;
   const displayCurrency =
-    phase === 'select_method' ? state.settings.business.currency : paymentCurrency;
+    phase === 'select_method'
+      ? state.settings.business.currency
+      : paymentCurrency;
   const isReaderPayment =
     selectedMethod === 'card_reader' || selectedMethod === 'tap_to_pay';
   const tapToPayAvailable =
-    terminal.terminalConfig.readerMode === 'tap_to_pay' && terminal.isReaderConnected;
+    terminal.terminalConfig.readerMode === 'tap_to_pay' &&
+    terminal.isReaderConnected;
   const cardReaderAvailable =
-    terminal.isReaderConnected && terminal.terminalConfig.readerMode !== 'tap_to_pay';
+    terminal.isReaderConnected &&
+    terminal.terminalConfig.readerMode !== 'tap_to_pay';
   const connectedReaderLabel =
     terminal.connectedReader?.label ||
     terminal.connectedReader?.serialNumber ||
@@ -338,7 +392,10 @@ export function MockPaymentScreen() {
         });
 
         if (backendIntent.stripeCustomerId && selectedCustomer) {
-          updateCustomerStripeId(selectedCustomer.id, backendIntent.stripeCustomerId);
+          updateCustomerStripeId(
+            selectedCustomer.id,
+            backendIntent.stripeCustomerId,
+          );
         }
 
         if (attemptRef.current !== token) {
@@ -376,14 +433,15 @@ export function MockPaymentScreen() {
         const cardPresentType = paymentMethodDetails?.interacPresentDetails
           ? 'interac_present'
           : paymentMethodDetails?.cardPresentDetails
-            ? 'card_present'
-            : undefined;
+          ? 'card_present'
+          : undefined;
         const readerTypeLabel =
-          method === 'tap_to_pay' || terminal.terminalConfig.readerMode === 'tap_to_pay'
+          method === 'tap_to_pay' ||
+          terminal.terminalConfig.readerMode === 'tap_to_pay'
             ? 'Tap to Pay'
             : terminal.connectedReader?.simulated
-              ? 'Simulated reader'
-              : terminal.connectedReader?.deviceType ?? 'Bluetooth terminal';
+            ? 'Simulated reader'
+            : terminal.connectedReader?.deviceType ?? 'Bluetooth terminal';
 
         failureStage = 'recording_sale';
         const transaction = createApprovedTransaction({
@@ -395,7 +453,8 @@ export function MockPaymentScreen() {
             paymentIntentId: processedIntent.id,
             chargeId: charge?.id,
             stripeCustomerId:
-              backendIntent.stripeCustomerId || selectedCustomer?.stripeCustomerId,
+              backendIntent.stripeCustomerId ||
+              selectedCustomer?.stripeCustomerId,
             cardBrand:
               cardPresentType === 'interac_present'
                 ? 'interac'
@@ -413,6 +472,7 @@ export function MockPaymentScreen() {
             sourceLabel: 'Stripe Terminal',
           },
         });
+        syncRecordedTransaction(transaction);
         setTransactionId(transaction?.id ?? processedIntent.id);
         setApprovedPayment({
           brand: cardPresentDetails?.brand,
@@ -450,6 +510,7 @@ export function MockPaymentScreen() {
         paymentProvider: 'mock',
         processorReference: processed.paymentId,
       });
+      syncRecordedTransaction(transaction);
       setTransactionId(transaction?.id ?? processed.transactionReference);
       setApprovedPayment({
         sourceLabel: method === 'cash' ? 'Cash payment' : 'Mock payment',
@@ -464,7 +525,10 @@ export function MockPaymentScreen() {
         const nextDebugLines = [
           `Failed step: ${PAYMENT_STAGE_LABELS[currentStage]}`,
           ...summary.debugLines,
-          `Amount: ${formatCurrency(saleAmountAtStart, saleCurrencyAtStart)} (${saleAmountAtStart} cents)`,
+          `Amount: ${formatCurrency(
+            saleAmountAtStart,
+            saleCurrencyAtStart,
+          )} (${saleAmountAtStart} cents)`,
           `Currency: ${saleCurrencyAtStart}`,
           `Location ID: ${terminal.terminalConfig.locationId || 'missing'}`,
           `Reader connection: ${terminal.connectionStatus}`,
@@ -510,19 +574,19 @@ export function MockPaymentScreen() {
   }
 
   return (
-    <AppScreen
-      title="Payment"
-      contentStyle={styles.paymentScreenContent}>
+    <AppScreen title="Payment" contentStyle={styles.paymentScreenContent}>
       <PaymentHero
         amountLabel={formatCurrency(displayAmountCents, displayCurrency)}
         modeLabel={
           tapToPayAvailable
             ? 'Tap to Pay ready'
             : cardReaderAvailable
-              ? 'Reader ready'
-              : 'Reader needed'
+            ? 'Reader ready'
+            : 'Reader needed'
         }
-        readerLabel={terminal.isReaderConnected ? connectedReaderLabel : undefined}
+        readerLabel={
+          terminal.isReaderConnected ? connectedReaderLabel : undefined
+        }
         active={phase === 'waiting' && isReaderPayment}
       />
 
@@ -546,30 +610,43 @@ export function MockPaymentScreen() {
           ) : null}
           <MethodCard
             title="Cash"
-            detail="Record payment locally"
+            detail="Enter cash received and calculate change"
             iconName="cash"
-            onPress={() => startPayment('cash')}
+            onPress={() => navigation.navigate('CashPayment')}
           />
           {!cardReaderAvailable && !tapToPayAvailable ? (
             <Pressable
-              onPress={() => navigation.navigate('MoreSection', { section: 'hardware' })}
+              onPress={() =>
+                navigation.navigate('MoreSection', { section: 'hardware' })
+              }
               style={[
                 styles.readerSetupCard,
                 {
                   backgroundColor: theme.colors.surface,
                   borderColor: theme.colors.border,
                 },
-              ]}>
+              ]}
+            >
               <MaterialDesignIcons
                 color={theme.colors.warning}
                 name="credit-card-wireless-outline"
                 size={28}
               />
               <View style={styles.readerSetupCopy}>
-                <Text style={[styles.readerSetupTitle, { color: theme.colors.text }]}>
+                <Text
+                  style={[
+                    styles.readerSetupTitle,
+                    { color: theme.colors.text },
+                  ]}
+                >
                   Connect a reader
                 </Text>
-                <Text style={[styles.readerSetupBody, { color: theme.colors.textMuted }]}>
+                <Text
+                  style={[
+                    styles.readerSetupBody,
+                    { color: theme.colors.textMuted },
+                  ]}
+                >
                   Add Bluetooth or enable Tap to Pay in Readers.
                 </Text>
               </View>
@@ -591,7 +668,8 @@ export function MockPaymentScreen() {
               backgroundColor: theme.colors.surface,
               borderColor: theme.colors.border,
             },
-          ]}>
+          ]}
+        >
           <View
             style={[
               styles.readerPulse,
@@ -603,14 +681,16 @@ export function MockPaymentScreen() {
               },
             ]}
           />
-          <Text style={[styles.readerInstructionText, { color: theme.colors.text }]}>
+          <Text
+            style={[styles.readerInstructionText, { color: theme.colors.text }]}
+          >
             {isReaderPayment
               ? readerWaitSeconds > 45
                 ? 'Still working. Do not start another sale.'
                 : 'Follow the reader prompts.'
               : selectedMethod === 'cash'
-                ? 'Recording cash payment...'
-                : 'Processing payment...'}
+              ? 'Recording cash payment...'
+              : 'Processing payment...'}
           </Text>
           <Pressable
             onPress={cancelPayment}
@@ -620,8 +700,11 @@ export function MockPaymentScreen() {
                 backgroundColor: theme.colors.surfaceMuted,
                 borderColor: theme.colors.border,
               },
-            ]}>
-            <Text style={[styles.cancelButtonLabel, { color: theme.colors.text }]}>
+            ]}
+          >
+            <Text
+              style={[styles.cancelButtonLabel, { color: theme.colors.text }]}
+            >
               Cancel payment
             </Text>
           </Pressable>
@@ -649,8 +732,8 @@ export function MockPaymentScreen() {
             guidanceLines.length
               ? guidanceLines.join('\n')
               : debugLines.length
-                ? debugLines.join('\n')
-                : 'The cart is still intact. No transaction was saved.'
+              ? debugLines.join('\n')
+              : 'The cart is still intact. No transaction was saved.'
           }
           secondaryDetail={
             guidanceLines.length && debugLines.length
@@ -729,7 +812,9 @@ function PaymentHero({
     <View style={[styles.heroCard, { backgroundColor: theme.colors.surface }]}>
       <View style={styles.heroTopRow}>
         <View style={styles.heroCopy}>
-          <Text style={[styles.kicker, { color: theme.colors.textMuted }]}>Amount due</Text>
+          <Text style={[styles.kicker, { color: theme.colors.textMuted }]}>
+            Amount due
+          </Text>
           <Text style={[styles.heroAmount, { color: theme.colors.text }]}>
             {amountLabel}
           </Text>
@@ -741,7 +826,8 @@ function PaymentHero({
               backgroundColor: theme.colors.surfaceMuted,
               borderColor: theme.colors.border,
             },
-          ]}>
+          ]}
+        >
           <View
             style={[
               styles.heroStatusDot,
@@ -766,7 +852,10 @@ function PaymentHero({
             {
               backgroundColor: `${theme.colors.success}26`,
               opacity: active
-                ? glow.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1] })
+                ? glow.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.35, 1],
+                  })
                 : 0.35,
               transform: [
                 {
@@ -786,8 +875,14 @@ function PaymentHero({
               backgroundColor: theme.colors.background,
               borderColor: theme.colors.border,
             },
-          ]}>
-          <View style={[styles.readerScreen, { backgroundColor: theme.colors.surfaceMuted }]}>
+          ]}
+        >
+          <View
+            style={[
+              styles.readerScreen,
+              { backgroundColor: theme.colors.surfaceMuted },
+            ]}
+          >
             <MaterialDesignIcons
               color={theme.colors.text}
               name="contactless-payment"
@@ -795,9 +890,24 @@ function PaymentHero({
             />
           </View>
           <View style={styles.readerDots}>
-            <View style={[styles.readerDot, { backgroundColor: theme.colors.textMuted }]} />
-            <View style={[styles.readerDot, { backgroundColor: theme.colors.textMuted }]} />
-            <View style={[styles.readerDot, { backgroundColor: theme.colors.textMuted }]} />
+            <View
+              style={[
+                styles.readerDot,
+                { backgroundColor: theme.colors.textMuted },
+              ]}
+            />
+            <View
+              style={[
+                styles.readerDot,
+                { backgroundColor: theme.colors.textMuted },
+              ]}
+            />
+            <View
+              style={[
+                styles.readerDot,
+                { backgroundColor: theme.colors.textMuted },
+              ]}
+            />
           </View>
         </View>
         <Animated.View
@@ -808,19 +918,35 @@ function PaymentHero({
               transform: [
                 {
                   translateY: active
-                    ? glow.interpolate({ inputRange: [0, 1], outputRange: [6, -4] })
+                    ? glow.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [6, -4],
+                      })
                     : 0,
                 },
               ],
             },
-          ]}>
-          <View style={[styles.cardChip, { backgroundColor: theme.colors.accentText }]} />
-          <View style={[styles.cardLine, { backgroundColor: theme.colors.accentText }]} />
+          ]}
+        >
+          <View
+            style={[
+              styles.cardChip,
+              { backgroundColor: theme.colors.accentText },
+            ]}
+          />
+          <View
+            style={[
+              styles.cardLine,
+              { backgroundColor: theme.colors.accentText },
+            ]}
+          />
         </Animated.View>
       </View>
 
       {readerLabel ? (
-        <Text style={[styles.heroReaderLabel, { color: theme.colors.textMuted }]}>
+        <Text
+          style={[styles.heroReaderLabel, { color: theme.colors.textMuted }]}
+        >
           {readerLabel}
         </Text>
       ) : null}
@@ -849,17 +975,33 @@ function MethodCard({
           backgroundColor: theme.colors.surface,
           borderColor: theme.colors.border,
         },
-      ]}>
-      <View style={[styles.methodIcon, { backgroundColor: theme.colors.surfaceMuted }]}>
-        <MaterialDesignIcons color={theme.colors.text} name={iconName} size={24} />
+      ]}
+    >
+      <View
+        style={[
+          styles.methodIcon,
+          { backgroundColor: theme.colors.surfaceMuted },
+        ]}
+      >
+        <MaterialDesignIcons
+          color={theme.colors.text}
+          name={iconName}
+          size={24}
+        />
       </View>
       <View style={styles.methodCopy}>
-        <Text style={[styles.methodTitle, { color: theme.colors.text }]}>{title}</Text>
+        <Text style={[styles.methodTitle, { color: theme.colors.text }]}>
+          {title}
+        </Text>
         <Text style={[styles.methodDetail, { color: theme.colors.textMuted }]}>
           {detail}
         </Text>
       </View>
-      <MaterialDesignIcons color={theme.colors.textMuted} name="chevron-right" size={24} />
+      <MaterialDesignIcons
+        color={theme.colors.textMuted}
+        name="chevron-right"
+        size={24}
+      />
     </Pressable>
   );
 }
@@ -905,14 +1047,23 @@ function ApprovedPaymentCard({
   }, [glow, scale]);
 
   return (
-    <View style={[styles.successScreen, { backgroundColor: theme.colors.surface }]}>
+    <View
+      style={[styles.successScreen, { backgroundColor: theme.colors.surface }]}
+    >
       <Animated.View
         style={[
           styles.successHalo,
           {
             backgroundColor: `${theme.colors.success}22`,
             opacity: glow,
-            transform: [{ scale: glow.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1.08] }) }],
+            transform: [
+              {
+                scale: glow.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.85, 1.08],
+                }),
+              },
+            ],
           },
         ]}
       />
@@ -923,7 +1074,8 @@ function ApprovedPaymentCard({
             backgroundColor: theme.colors.success,
             transform: [{ scale }],
           },
-        ]}>
+        ]}
+      >
         <MaterialDesignIcons color="#FFFFFF" name="check-bold" size={34} />
       </Animated.View>
 
@@ -934,7 +1086,9 @@ function ApprovedPaymentCard({
         <Text style={[styles.successAmount, { color: theme.colors.text }]}>
           {amountLabel}
         </Text>
-        <Text style={[styles.successSubtitle, { color: theme.colors.textMuted }]}>
+        <Text
+          style={[styles.successSubtitle, { color: theme.colors.textMuted }]}
+        >
           Ready for receipt, printing, and next-sale actions.
         </Text>
       </View>
@@ -947,7 +1101,8 @@ function ApprovedPaymentCard({
               backgroundColor: theme.colors.surfaceMuted,
               borderColor: theme.colors.border,
             },
-          ]}>
+          ]}
+        >
           <View style={styles.networkRow}>
             <View
               style={[
@@ -956,18 +1111,29 @@ function ApprovedPaymentCard({
                   backgroundColor: theme.colors.surface,
                   borderColor: theme.colors.border,
                 },
-              ]}>
+              ]}
+            >
               <CardNetworkLogo brand={brand} fallbackColor={brandAccent} />
             </View>
             <View style={{ flex: 1, gap: 3 }}>
-              <Text style={{ color: theme.colors.text, fontWeight: '800', fontSize: 16 }}>
+              <Text
+                style={{
+                  color: theme.colors.text,
+                  fontWeight: '800',
+                  fontSize: 16,
+                }}
+              >
                 {brandLabel ?? 'Card payment'}
               </Text>
               <Text style={{ color: theme.colors.textMuted }}>
                 {last4 ? `•••• ${last4}` : 'Card-present payment'}
               </Text>
             </View>
-            <MaterialDesignIcons color={theme.colors.success} name="check-circle" size={22} />
+            <MaterialDesignIcons
+              color={theme.colors.success}
+              name="check-circle"
+              size={22}
+            />
           </View>
         </View>
       ) : null}
@@ -979,7 +1145,8 @@ function ApprovedPaymentCard({
             backgroundColor: theme.colors.background,
             borderColor: theme.colors.border,
           },
-        ]}>
+        ]}
+      >
         <DetailRow label="Status" value="Completed" />
         <DetailRow
           label="Source"
@@ -990,8 +1157,14 @@ function ApprovedPaymentCard({
 
       <Pressable
         onPress={onDone}
-        style={[styles.successButton, { backgroundColor: theme.colors.accent }]}>
-        <Text style={[styles.successButtonLabel, { color: theme.colors.accentText }]}>
+        style={[styles.successButton, { backgroundColor: theme.colors.accent }]}
+      >
+        <Text
+          style={[
+            styles.successButtonLabel,
+            { color: theme.colors.accentText },
+          ]}
+        >
           Done
         </Text>
       </Pressable>
@@ -1004,7 +1177,13 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 
   return (
     <View style={styles.detailRow}>
-      <Text style={{ color: theme.colors.textMuted, fontSize: 13, fontWeight: '700' }}>
+      <Text
+        style={{
+          color: theme.colors.textMuted,
+          fontSize: 13,
+          fontWeight: '700',
+        }}
+      >
         {label}
       </Text>
       <Text
@@ -1014,7 +1193,8 @@ function DetailRow({ label, value }: { label: string; value: string }) {
           fontWeight: '800',
           flex: 1,
           textAlign: 'right',
-        }}>
+        }}
+      >
         {value}
       </Text>
     </View>
@@ -1046,9 +1226,16 @@ function ResultCard({
     <View
       style={[
         styles.block,
-        { alignItems: 'center', paddingVertical: 28, backgroundColor: theme.colors.surface },
-      ]}>
-      <Text style={{ color: theme.colors.text, fontSize: 24, fontWeight: '900' }}>
+        {
+          alignItems: 'center',
+          paddingVertical: 28,
+          backgroundColor: theme.colors.surface,
+        },
+      ]}
+    >
+      <Text
+        style={{ color: theme.colors.text, fontSize: 24, fontWeight: '900' }}
+      >
         {title}
       </Text>
       {statusLabel ? (
@@ -1059,11 +1246,14 @@ function ResultCard({
             fontWeight: '800',
             textTransform: 'uppercase',
             letterSpacing: 0.8,
-          }}>
+          }}
+        >
           Failed at {statusLabel}
         </Text>
       ) : null}
-      <Text style={{ color: theme.colors.textMuted, textAlign: 'center' }}>{body}</Text>
+      <Text style={{ color: theme.colors.textMuted, textAlign: 'center' }}>
+        {body}
+      </Text>
       {hasExpandableDetail ? (
         <Pressable
           onPress={() => setShowDetail(current => !current)}
@@ -1073,7 +1263,8 @@ function ResultCard({
               backgroundColor: theme.colors.surfaceMuted,
               borderColor: theme.colors.border,
             },
-          ]}>
+          ]}
+        >
           <Text style={{ color: theme.colors.text, fontWeight: '800' }}>
             {showDetail ? 'Hide details' : 'Show details'}
           </Text>
@@ -1091,7 +1282,8 @@ function ResultCard({
             {
               color: theme.colors.text,
             },
-          ]}>
+          ]}
+        >
           {detail}
         </Text>
       ) : null}
@@ -1102,11 +1294,15 @@ function ResultCard({
             {
               color: theme.colors.textMuted,
             },
-          ]}>
+          ]}
+        >
           {secondaryDetail}
         </Text>
       ) : null}
-      <Text style={[styles.inlineAction, { color: theme.colors.text }]} onPress={onAction}>
+      <Text
+        style={[styles.inlineAction, { color: theme.colors.text }]}
+        onPress={onAction}
+      >
         {actionLabel}
       </Text>
     </View>

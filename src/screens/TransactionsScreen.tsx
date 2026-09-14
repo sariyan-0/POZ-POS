@@ -1,5 +1,5 @@
-import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons/static';
 import { CardNetworkLogo } from '../components/CardNetworkLogo';
 import { AppScreen, EmptyNotice } from '../components/POSUI';
@@ -8,16 +8,43 @@ import { Transaction } from '../models/pos';
 import { useRootNavigation } from '../navigation/AppNavigator';
 import { useAppTheme } from '../theme';
 import { formatCurrency, formatDateTime } from '../utils/format';
+import { recordTransaction } from '../services/api/transactions';
 
 export function TransactionsScreen() {
-  const { state } = usePOS();
+  const { state, updateTransactionSync, syncCustomers } = usePOS();
   const navigation = useRootNavigation();
   const theme = useAppTheme();
+  const [syncing, setSyncing] = useState(false);
+
+  async function retryPendingTransactions() {
+    setSyncing(true);
+    const pending = state.transactions.filter(transaction => transaction.serverSyncStatus !== 'synced');
+    await Promise.all(pending.map(async transaction => {
+      try {
+        const order = await recordTransaction(transaction);
+        updateTransactionSync(transaction.id, {
+          serverSyncStatus: 'synced',
+          serverOrderId: order.id,
+          serverOrderNumber: order.order_number,
+          serverSyncError: undefined,
+          syncedAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        updateTransactionSync(transaction.id, {
+          serverSyncStatus: 'failed',
+          serverSyncError: error instanceof Error ? error.message : 'Unable to sync transaction.',
+        });
+      }
+    }));
+    await syncCustomers().catch(() => undefined);
+    setSyncing(false);
+  }
 
   return (
     <AppScreen
       title="Transactions"
-      subtitle="Locally stored completed mock sales.">
+      subtitle="Completed sales are saved on-device first and synced to OneRegister."
+      refreshControl={<RefreshControl refreshing={syncing} onRefresh={retryPendingTransactions} tintColor={theme.colors.accent} colors={[theme.colors.accent]} />}>
       {state.transactions.length ? (
         <View style={{ backgroundColor: theme.colors.surface }}>
           {state.transactions.map(transaction => (
@@ -72,6 +99,11 @@ function TransactionRow({
             <Text style={[styles.transactionMeta, { color: theme.colors.textMuted }]}>
               {getTransactionPaymentLabel(transaction)}
             </Text>
+            {transaction.serverSyncStatus !== 'synced' ? (
+              <Text style={[styles.syncState, { color: transaction.serverSyncStatus === 'failed' ? theme.colors.danger : theme.colors.textMuted }]}>
+                {transaction.serverSyncStatus === 'failed' ? 'Saved offline · pull to retry' : 'Syncing'}
+              </Text>
+            ) : null}
           </View>
         </View>
         <View style={styles.transactionRight}>
@@ -243,6 +275,10 @@ const styles = StyleSheet.create({
   transactionMeta: {
     fontSize: 17,
     fontWeight: '800',
+  },
+  syncState: {
+    fontSize: 11,
+    fontWeight: '700',
   },
   transactionRight: {
     flexDirection: 'row',

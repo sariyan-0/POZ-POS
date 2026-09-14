@@ -27,7 +27,7 @@ import {
   RichToolbar,
   actions as richTextActions,
 } from 'react-native-pell-rich-editor';
-import { Product, ProductOptionSet } from '../models/pos';
+import { Product, ProductMassUnit, ProductOptionSet, ProductUnitType } from '../models/pos';
 import { SegmentedTabs } from '../components/POSUI';
 import { createEmptyProduct, usePOS } from '../hooks/usePOS';
 import { RootStackParamList, useRootNavigation } from '../navigation/AppNavigator';
@@ -63,6 +63,7 @@ export function ProductEditorScreen() {
   const [showOptionSelector, setShowOptionSelector] = useState(false);
   const [showOptionCreator, setShowOptionCreator] = useState(false);
   const [showModifierSelector, setShowModifierSelector] = useState(false);
+  const [showUnitSelector, setShowUnitSelector] = useState(false);
   const [showTileEditor, setShowTileEditor] = useState(false);
   const [tileEditorTab, setTileEditorTab] = useState<TileEditorTab>('image');
   const [tileEditorMessage, setTileEditorMessage] = useState('');
@@ -75,11 +76,51 @@ export function ProductEditorScreen() {
   const [optionDisplayName, setOptionDisplayName] = useState('');
   const [optionValues, setOptionValues] = useState(['']);
   const [editingOptionSetId, setEditingOptionSetId] = useState<string | null>(null);
+  const [priceText, setPriceText] = useState(
+    product.priceInCents ? String(product.priceInCents / 100) : '',
+  );
   const scrollViewRef = useRef<any>(null);
   const descriptionEditorRef = useRef<RichEditor>(null);
 
   const saveDisabled = !product.name.trim();
   const isEditing = !!existingProduct;
+  const readyButtonBackground = theme.isDark ? '#FFFFFF' : '#111214';
+  const readyButtonText = theme.isDark ? '#111214' : '#FFFFFF';
+  const mutedButtonBackground = theme.colors.surfaceMuted;
+  const selectedUnitType = product.unitType ?? 'item';
+  const selectedMassUnit = product.massUnit ?? 'kg';
+  const unitLabel =
+    selectedUnitType === 'mass'
+      ? `Per mass (${selectedMassUnit})`
+      : 'Per item';
+
+  function parsePriceInCents(text: string) {
+    return Math.max(0, Math.round((Number.parseFloat(text || '0') || 0) * 100));
+  }
+
+  function updatePrice(text: string) {
+    setPriceText(text);
+    setProduct(current => ({
+      ...current,
+      priceInCents: parsePriceInCents(text),
+    }));
+  }
+
+  function updateUnitType(unitType: ProductUnitType) {
+    setProduct(current => ({
+      ...current,
+      unitType,
+      massUnit: current.massUnit ?? 'kg',
+    }));
+  }
+
+  function updateMassUnit(massUnit: ProductMassUnit) {
+    setProduct(current => ({
+      ...current,
+      unitType: 'mass',
+      massUnit,
+    }));
+  }
 
   function saveProduct() {
     if (saveDisabled) {
@@ -93,6 +134,9 @@ export function ProductEditorScreen() {
       description: product.description.trim(),
       sku: product.sku.trim(),
       category: product.category.trim() || 'Items',
+      unitType: selectedUnitType,
+      massUnit: selectedMassUnit,
+      priceInCents: parsePriceInCents(priceText),
       imageUri: product.imageUri?.trim() || '',
       tileColor: product.tileColor?.trim() || '',
       tileLabel: product.tileLabel?.trim() || '',
@@ -230,7 +274,7 @@ export function ProductEditorScreen() {
       PermissionsAndroid.PERMISSIONS.CAMERA,
       {
         title: 'Allow camera access',
-        message: 'PowersOfZeroPOS needs the camera so you can take a product tile photo.',
+        message: 'OneRegister needs the camera so you can take a product tile photo.',
         buttonPositive: 'Allow',
         buttonNegative: 'Not now',
       },
@@ -345,8 +389,8 @@ export function ProductEditorScreen() {
         <View style={[styles.topBar, { borderBottomColor: theme.colors.border }]}>
           <Pressable
             onPress={() => navigation.goBack()}
-            style={[styles.circleButton, { backgroundColor: theme.colors.surfaceMuted }]}>
-            <MaterialDesignIcons color={theme.colors.text} name="close" size={28} />
+            style={[styles.circleButton, { backgroundColor: readyButtonBackground }]}>
+            <MaterialDesignIcons color={readyButtonText} name="close" size={28} />
           </Pressable>
           <Text style={[styles.title, { color: theme.colors.text }]}>
             {isEditing ? 'Edit item' : 'Create item'}
@@ -358,8 +402,8 @@ export function ProductEditorScreen() {
               styles.saveButton,
               {
                 backgroundColor: saveDisabled
-                  ? theme.colors.surfaceMuted
-                  : theme.colors.accent,
+                  ? mutedButtonBackground
+                  : readyButtonBackground,
                 opacity: saveDisabled ? 0.55 : 1,
               },
             ]}>
@@ -367,7 +411,7 @@ export function ProductEditorScreen() {
               style={[
                 styles.saveLabel,
                 {
-                  color: saveDisabled ? theme.colors.textMuted : theme.colors.accentText,
+                  color: saveDisabled ? theme.colors.textMuted : readyButtonText,
                 },
               ]}>
               Save
@@ -421,18 +465,8 @@ export function ProductEditorScreen() {
             placeholderTextColor={theme.colors.textMuted}
             style={[styles.nameInput, { color: theme.colors.text }]}
           />
-          <Pressable style={styles.inlineAction}>
-            <MaterialDesignIcons color={theme.colors.text} name="barcode-scan" size={26} />
-            <Text style={[styles.inlineActionLabel, { color: theme.colors.text }]}>
-              Auto create
-            </Text>
-          </Pressable>
         </View>
       </FieldCard>
-
-      <Text style={[styles.helperText, { color: theme.colors.textMuted }]}>
-        Scan a barcode with a connected scanner to auto create the item.
-      </Text>
 
       <FieldCard>
         <View style={styles.descriptionEditor}>
@@ -523,23 +557,7 @@ export function ProductEditorScreen() {
         <MaterialDesignIcons color={theme.colors.textMuted} name="chevron-right" size={28} />
       </Pressable>
 
-      <SectionDivider themeBorder={theme.colors.border} />
-
-      <SectionTitle label="Categorization" />
-      <Pressable style={styles.infoRow}>
-        <View style={styles.rowIconWrap}>
-          <MaterialDesignIcons color={theme.colors.text} name="folder-outline" size={30} />
-        </View>
-        <View style={styles.infoCopy}>
-          <Text style={[styles.infoTitle, { color: theme.colors.text }]}>Categories</Text>
-          <Text style={[styles.infoBody, { color: theme.colors.textMuted }]}>
-            {product.category || 'None'}
-          </Text>
-        </View>
-        <MaterialDesignIcons color={theme.colors.textMuted} name="chevron-right" size={28} />
-      </Pressable>
-
-      <SectionDivider themeBorder={theme.colors.border} />
+      {/* Categorization is temporarily hidden until item category workflows are ready. */}
 
       <SectionTitle label="Options" />
       <Text style={[styles.paragraph, { color: theme.colors.text }]}>
@@ -559,30 +577,22 @@ export function ProductEditorScreen() {
         label="SKU"
         value={product.sku}
         onChangeText={text => setProduct(current => ({ ...current, sku: text }))}
+        placeholder="SKU"
       />
-      <StackField
-        label="GTIN"
-        value=""
-        onChangeText={() => {}}
-        placeholder="GTIN"
-      />
-      <Pressable style={[styles.stackCard, { borderColor: theme.colors.border }]}>
+      <Pressable
+        onPress={() => setShowUnitSelector(true)}
+        style={[styles.stackCard, { borderColor: theme.colors.border }]}>
         <View>
           <Text style={[styles.stackLabel, { color: theme.colors.text }]}>Unit</Text>
-          <Text style={[styles.stackValue, { color: theme.colors.text }]}>Per item</Text>
+          <Text style={[styles.stackValue, { color: theme.colors.text }]}>{unitLabel}</Text>
         </View>
         <Text style={[styles.linkLike, { color: theme.colors.text }]}>Change</Text>
       </Pressable>
       <StackField
-        label="Price"
-        value={product.priceInCents ? String(product.priceInCents / 100) : ''}
-        onChangeText={text =>
-          setProduct(current => ({
-            ...current,
-            priceInCents: Math.max(0, Math.round((Number.parseFloat(text || '0') || 0) * 100)),
-          }))
-        }
-        placeholder="Price"
+        label={selectedUnitType === 'mass' ? `Unit price per ${selectedMassUnit}` : 'Unit price'}
+        value={priceText}
+        onChangeText={updatePrice}
+        placeholder="0.00"
         keyboardType="numeric"
       />
       <StackField
@@ -890,6 +900,103 @@ export function ProductEditorScreen() {
                 </Pressable>
               );
             })}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showUnitSelector}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowUnitSelector(false)}>
+        <View style={[styles.modalBackdrop, { backgroundColor: theme.colors.overlay }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowUnitSelector(false)} />
+          <View style={[styles.sheetCard, { backgroundColor: theme.colors.surface }]}>
+            <View style={styles.sheetHeader}>
+              <Pressable onPress={() => setShowUnitSelector(false)}>
+                <MaterialDesignIcons color={theme.colors.text} name="close" size={28} />
+              </Pressable>
+              <Text style={[styles.sheetTitle, { color: theme.colors.text }]}>Unit</Text>
+              <Pressable onPress={() => setShowUnitSelector(false)}>
+                <Text style={[styles.sheetAction, { color: theme.colors.text }]}>Done</Text>
+              </Pressable>
+            </View>
+
+            <Text style={[styles.optionLabel, { color: theme.colors.text }]}>Sell by</Text>
+            <View style={styles.unitChoiceGroup}>
+              {[
+                { key: 'item' as ProductUnitType, label: 'Per item' },
+                { key: 'mass' as ProductUnitType, label: 'Per mass' },
+              ].map(option => {
+                const selected = selectedUnitType === option.key;
+                return (
+                  <Pressable
+                    key={option.key}
+                    onPress={() => updateUnitType(option.key)}
+                    style={[
+                      styles.unitChoiceRow,
+                      {
+                        borderColor: selected ? theme.colors.accent : theme.colors.border,
+                        backgroundColor: selected
+                          ? theme.colors.surfaceStrong
+                          : theme.colors.surface,
+                      },
+                    ]}>
+                    <Text style={[styles.infoTitle, { color: theme.colors.text }]}>
+                      {option.label}
+                    </Text>
+                    <MaterialDesignIcons
+                      color={selected ? theme.colors.accent : theme.colors.textMuted}
+                      name={selected ? 'check-circle' : 'checkbox-blank-circle-outline'}
+                      size={24}
+                    />
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {selectedUnitType === 'mass' ? (
+              <>
+                <Text style={[styles.optionLabel, { color: theme.colors.text }]}>Mass unit</Text>
+                <View style={styles.unitSegment}>
+                  {[
+                    { key: 'kg' as ProductMassUnit, label: 'kg' },
+                    { key: 'lb' as ProductMassUnit, label: 'pounds' },
+                  ].map(option => {
+                    const selected = selectedMassUnit === option.key;
+                    return (
+                      <Pressable
+                        key={option.key}
+                        onPress={() => updateMassUnit(option.key)}
+                        style={[
+                          styles.unitSegmentButton,
+                          {
+                            backgroundColor: selected
+                              ? readyButtonBackground
+                              : theme.colors.surfaceMuted,
+                          },
+                        ]}>
+                        <Text
+                          style={[
+                            styles.unitSegmentLabel,
+                            { color: selected ? readyButtonText : theme.colors.text },
+                          ]}>
+                          {option.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </>
+            ) : null}
+
+            <StackField
+              label={selectedUnitType === 'mass' ? `Unit price per ${selectedMassUnit}` : 'Unit price'}
+              value={priceText}
+              onChangeText={updatePrice}
+              placeholder="0.00"
+              keyboardType="numeric"
+            />
           </View>
         </View>
       </Modal>
@@ -1549,5 +1656,35 @@ const styles = StyleSheet.create({
   },
   optionInputList: {
     gap: 0,
+  },
+  unitChoiceGroup: {
+    gap: 10,
+    marginBottom: 22,
+  },
+  unitChoiceRow: {
+    minHeight: 66,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  unitSegment: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 22,
+  },
+  unitSegmentButton: {
+    minHeight: 52,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+    flex: 1,
+  },
+  unitSegmentLabel: {
+    fontSize: 16,
+    fontWeight: '800',
   },
 });

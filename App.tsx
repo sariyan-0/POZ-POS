@@ -1,32 +1,18 @@
 import React from 'react';
-import { ActivityIndicator, StatusBar, View } from 'react-native';
+import { ActivityIndicator, StatusBar, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { POSProvider, usePOS } from './src/context/POSProvider';
+import { DeviceConnectionProvider, useDeviceConnection } from './src/context/DeviceConnectionProvider';
 import { AppNavigator } from './src/navigation/AppNavigator';
+import { DeviceActivationScreen } from './src/screens/DeviceActivationScreen';
 import { StaffLockScreen } from './src/screens/StaffLockScreen';
 import { AppStripeTerminalProvider } from './src/terminal/StripeTerminalProvider';
 import { useAppTheme } from './src/theme';
+import { BrandLogo } from './src/components/BrandLogo';
 
 function AppRoot() {
-  const { isHydrated, isStaffAuthenticated } = usePOS();
+  const { isStaffAuthenticated } = usePOS();
   const theme = useAppTheme();
-
-  if (!isHydrated) {
-    return (
-      <View
-        style={{
-          flex: 1,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: theme.colors.background,
-        }}>
-        <StatusBar
-          barStyle={theme.isDark ? 'light-content' : 'dark-content'}
-        />
-        <ActivityIndicator color={theme.colors.accent} size="large" />
-      </View>
-    );
-  }
 
   if (!isStaffAuthenticated) {
     return <StaffLockScreen />;
@@ -42,13 +28,42 @@ function AppRoot() {
   );
 }
 
+function AppConnectionGate() {
+  const { isHydrated } = usePOS();
+  const { connection, isChecking } = useDeviceConnection();
+  const theme = useAppTheme();
+
+  if (!isHydrated || isChecking) {
+    return (
+      <View
+        style={[styles.splash, { backgroundColor: theme.colors.background }]}>
+        <StatusBar barStyle={theme.isDark ? 'light-content' : 'dark-content'} />
+        <BrandLogo />
+        <ActivityIndicator color={theme.colors.success} size="small" />
+      </View>
+    );
+  }
+
+  if (!connection) return <DeviceActivationScreen />;
+
+  return (
+    <AppStripeTerminalProvider>
+      <AppRoot />
+    </AppStripeTerminalProvider>
+  );
+}
+
+const styles = StyleSheet.create({
+  splash: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 28 },
+});
+
 export default function App() {
   return (
     <SafeAreaProvider>
       <POSProvider>
-        <AppStripeTerminalProvider>
-          <AppRoot />
-        </AppStripeTerminalProvider>
+        <DeviceConnectionProvider>
+          <AppConnectionGate />
+        </DeviceConnectionProvider>
       </POSProvider>
     </SafeAreaProvider>
   );

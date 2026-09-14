@@ -4,7 +4,7 @@ import { RouteProp, useRoute } from '@react-navigation/native';
 import { AppScreen } from '../components/POSUI';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { usePOS } from '../hooks/usePOS';
-import { AppearanceMode } from '../models/pos';
+import { AppearanceMode, TaxDefinition } from '../models/pos';
 import { DeveloperTerminalPanel } from './DeveloperTerminalPanel';
 import { useAppStripeTerminal } from '../terminal/StripeTerminalProvider';
 import { useAppTheme } from '../theme';
@@ -18,6 +18,51 @@ export function MoreSectionScreen() {
   const terminal = useAppStripeTerminal();
   const [taxName, setTaxName] = useState('');
   const [taxValue, setTaxValue] = useState('');
+  const [editingTaxId, setEditingTaxId] = useState<string | null>(null);
+
+  const editingTax = editingTaxId
+    ? state.settings.business.taxDefinitions.find(tax => tax.id === editingTaxId)
+    : undefined;
+
+  function createTaxId(name: string) {
+    const baseId = `tax-${
+      name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'custom'
+    }`;
+    let nextId = baseId;
+    let suffix = 2;
+    while (state.settings.business.taxDefinitions.some(tax => tax.id === nextId)) {
+      nextId = `${baseId}-${suffix}`;
+      suffix += 1;
+    }
+    return nextId;
+  }
+
+  function resetTaxForm() {
+    setTaxName('');
+    setTaxValue('');
+    setEditingTaxId(null);
+  }
+
+  function startEditingTax(tax: TaxDefinition) {
+    setEditingTaxId(tax.id);
+    setTaxName(tax.name);
+    setTaxValue(String(tax.rate));
+  }
+
+  function saveTax() {
+    const trimmedName = taxName.trim();
+    if (!trimmedName) {
+      return;
+    }
+
+    upsertTaxDefinition({
+      id: editingTax?.id ?? createTaxId(trimmedName),
+      name: trimmedName,
+      rate: Math.max(0, Number.parseFloat(taxValue || '0') || 0),
+      enabled: editingTax?.enabled ?? true,
+    });
+    resetTaxForm();
+  }
 
   if (params.section === 'hardware') {
     return (
@@ -71,22 +116,45 @@ export function MoreSectionScreen() {
                   {tax.rate}% {tax.enabled ? 'enabled' : 'disabled'}
                 </Text>
               </View>
-              <Pressable
-                onPress={() => deleteTaxDefinition(tax.id)}
-                style={{
-                  minHeight: 40,
-                  minWidth: 72,
-                  borderRadius: 12,
-                  borderWidth: 1,
-                  borderColor: theme.colors.danger,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  paddingHorizontal: 12,
-                }}>
-                <Text style={{ color: theme.colors.danger, fontSize: 14, fontWeight: '800' }}>
-                  Delete
-                </Text>
-              </Pressable>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <Pressable
+                  onPress={() => startEditingTax(tax)}
+                  style={{
+                    minHeight: 40,
+                    minWidth: 62,
+                    borderRadius: 12,
+                    borderWidth: 1,
+                    borderColor: theme.colors.border,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    paddingHorizontal: 12,
+                  }}>
+                  <Text style={{ color: theme.colors.text, fontSize: 14, fontWeight: '800' }}>
+                    Edit
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    if (editingTaxId === tax.id) {
+                      resetTaxForm();
+                    }
+                    deleteTaxDefinition(tax.id);
+                  }}
+                  style={{
+                    minHeight: 40,
+                    minWidth: 72,
+                    borderRadius: 12,
+                    borderWidth: 1,
+                    borderColor: theme.colors.danger,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    paddingHorizontal: 12,
+                  }}>
+                  <Text style={{ color: theme.colors.danger, fontSize: 14, fontWeight: '800' }}>
+                    Delete
+                  </Text>
+                </Pressable>
+              </View>
             </View>
           ))}
           {!state.settings.business.taxDefinitions.length ? (
@@ -127,32 +195,41 @@ export function MoreSectionScreen() {
               backgroundColor: theme.colors.surfaceMuted,
             }}
           />
-          <Pressable
-            onPress={() => {
-              if (!taxName.trim()) {
-                return;
-              }
-              upsertTaxDefinition({
-                id: `tax-${taxName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
-                name: taxName.trim(),
-                rate: Math.max(0, Number.parseFloat(taxValue || '0') || 0),
-                enabled: true,
-              });
-              setTaxName('');
-              setTaxValue('');
-            }}
-            style={{
-              minHeight: 50,
-              borderRadius: 14,
-              alignItems: 'center',
-              justifyContent: 'center',
-              paddingHorizontal: 14,
-              backgroundColor: theme.colors.accent,
-            }}>
-            <Text style={{ color: theme.colors.accentText, fontSize: 15, fontWeight: '800' }}>
-              Add tax type
-            </Text>
-          </Pressable>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <Pressable
+              onPress={saveTax}
+              style={{
+                minHeight: 50,
+                borderRadius: 14,
+                alignItems: 'center',
+                justifyContent: 'center',
+                paddingHorizontal: 14,
+                backgroundColor: theme.colors.accent,
+                flex: 1,
+              }}>
+              <Text style={{ color: theme.colors.accentText, fontSize: 15, fontWeight: '800' }}>
+                {editingTax ? 'Save tax type' : 'Add tax type'}
+              </Text>
+            </Pressable>
+            {editingTax ? (
+              <Pressable
+                onPress={resetTaxForm}
+                style={{
+                  minHeight: 50,
+                  borderRadius: 14,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingHorizontal: 14,
+                  borderWidth: 1,
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.surfaceMuted,
+                }}>
+                <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '800' }}>
+                  Cancel
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
         </View>
       </AppScreen>
     );

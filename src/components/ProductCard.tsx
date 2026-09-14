@@ -66,6 +66,7 @@ export function ProductCard({
       </View>
       <Text style={[styles.price, { color: theme.colors.text }]}>
         {formatCurrency(product.priceInCents, product.currency)}
+        {product.unitType === 'mass' ? `/${product.massUnit ?? 'kg'}` : ''}
       </Text>
       <Pill
         label={

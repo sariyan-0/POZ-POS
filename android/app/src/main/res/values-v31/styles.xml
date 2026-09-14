@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
+        <item name="android:windowSplashScreenBackground">#F3F6F2</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/oneregister_mark</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">#F3F6F2</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">#F3F6F2</item>
+        <item name="android:navigationBarColor">#F3F6F2</item>
+    </style>
+</resources>

@@ -19,6 +19,10 @@ type BackendCustomerPayload = {
   note?: string;
   createdAt?: string;
   updatedAt?: string;
+  visitCount?: number;
+  totalSpentInCents?: number;
+  lastVisitAt?: string;
+  stripeSyncStatus?: 'pending' | 'synced' | 'failed' | 'deleted';
 };
 
 type BackendCustomerResponse = {
@@ -33,21 +37,23 @@ export async function createBackendCustomer(
   customer: Customer,
 ): Promise<Partial<Customer> | null> {
   try {
-    const response = await apiClient.post<BackendCustomerResponse>(
-      apiConfig.endpoints.createCustomer,
-      {
-        localCustomerId: customer.id,
-        name: customer.name,
-        email: customer.email,
-        phone: customer.phone,
-        note: customer.note,
-      },
-    );
-
-    return mapBackendCustomer(response.data.customer);
+    return await syncBackendCustomer(customer);
   } catch {
     return null;
   }
+}
+
+export async function syncBackendCustomer(customer: Customer): Promise<Partial<Customer>> {
+  const response = await apiClient.post<BackendCustomerResponse>(apiConfig.endpoints.createCustomer, {
+    localCustomerId: customer.id,
+    name: customer.name,
+    email: customer.email,
+    phone: customer.phone,
+    note: customer.note,
+  });
+  const mapped = mapBackendCustomer(response.data.customer);
+  if (!mapped?.id) throw new Error('Invalid customer sync response');
+  return mapped;
 }
 
 export async function searchBackendCustomers(
@@ -70,6 +76,12 @@ export async function searchBackendCustomers(
   } catch {
     return [];
   }
+}
+
+export async function fetchCustomers(): Promise<{ customers: Customer[]; syncedAt: string }> {
+  const response = await apiClient.get<BackendCustomerResponse>(apiConfig.endpoints.customers);
+  const customers = (response.data.customers ?? []).map(mapBackendCustomer).filter((customer): customer is Customer => Boolean(customer?.id && customer.name)).map(customer => customer as Customer);
+  return { customers, syncedAt: new Date().toISOString() };
 }
 
 function mapBackendCustomer(
@@ -95,6 +107,9 @@ function mapBackendCustomer(
     stripeCustomerId: customer.stripeCustomerId,
     createdAt: customer.createdAt,
     updatedAt: customer.updatedAt,
-    syncStatus: customer.stripeCustomerId ? 'synced' : undefined,
+    syncStatus: customer.stripeSyncStatus === 'failed' ? 'failed' : customer.stripeCustomerId ? 'synced' : 'local',
+    visitCount: customer.visitCount,
+    totalSpentInCents: customer.totalSpentInCents,
+    lastVisitAt: customer.lastVisitAt,
   };
 }

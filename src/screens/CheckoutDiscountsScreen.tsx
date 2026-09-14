@@ -18,7 +18,7 @@ import { formatCurrency } from '../utils/format';
 export function CheckoutDiscountsScreen() {
   const navigation = useRootNavigation();
   const theme = useAppTheme();
-  const { activeDiscounts, currentStaff, addDiscountToCart, authorizeManagerPin } = usePOS();
+  const { activeDiscounts, currentStaff, addDiscountToCart, authorizePermissionPin, hasPermission } = usePOS();
   const [restrictedDiscount, setRestrictedDiscount] = useState<Discount | null>(null);
   const [showDiscountAuth, setShowDiscountAuth] = useState(false);
   const [managerPin, setManagerPin] = useState('');
@@ -37,7 +37,7 @@ export function CheckoutDiscountsScreen() {
   }
 
   function tryManagerUnlock(candidatePin: string) {
-    const matchedStaff = authorizeManagerPin(candidatePin);
+    const matchedStaff = authorizePermissionPin(candidatePin, 'apply_discounts');
     if (!matchedStaff || !restrictedDiscount) {
       setManagerPin('');
       setPinError('Wrong PIN.');
@@ -83,7 +83,7 @@ export function CheckoutDiscountsScreen() {
           <Pressable
             key={discount.id}
             onPress={() => {
-              if (discount.requirePasscode && currentStaff?.role === 'cashier') {
+              if (!hasPermission('apply_discounts', currentStaff) || (discount.requirePasscode && currentStaff?.role === 'cashier')) {
                 setRestrictedDiscount(discount);
                 setShowDiscountAuth(false);
                 return;
@@ -169,7 +169,7 @@ export function CheckoutDiscountsScreen() {
                         styles.modalButtonLabel,
                         { color: theme.colors.accentText },
                       ]}>
-                      Continue
+                      Open PIN pad
                     </Text>
                   </Pressable>
                 </View>

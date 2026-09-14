@@ -1,10 +1,14 @@
 export type CurrencyCode = 'CAD';
+export type ProductUnitType = 'item' | 'mass';
+export type ProductMassUnit = 'kg' | 'lb';
 
 export interface Product {
   id: string;
   name: string;
   description: string;
   priceInCents: number;
+  unitType?: ProductUnitType;
+  massUnit?: ProductMassUnit;
   currency: CurrencyCode;
   category: string;
   sku: string;
@@ -89,6 +93,8 @@ export interface CartItem {
       modifierName: string;
       priceAdjustmentInCents: number;
     }>;
+    soldByMass?: boolean;
+    massUnit?: ProductMassUnit;
   };
 }
 
@@ -124,7 +130,21 @@ export interface Customer {
   note?: string;
   stripeCustomerId?: string;
   syncStatus?: 'local' | 'synced' | 'failed';
+  visitCount?: number;
+  totalSpentInCents?: number;
+  lastVisitAt?: string;
 }
+
+export type StaffPermission =
+  | 'process_sales'
+  | 'view_transactions'
+  | 'apply_discounts'
+  | 'issue_refunds'
+  | 'manage_customers'
+  | 'manage_catalog'
+  | 'manage_inventory'
+  | 'view_reports'
+  | 'manage_register_settings';
 
 export interface StaffMember {
   id: string;
@@ -132,6 +152,7 @@ export interface StaffMember {
   pinHash: string;
   pinSalt: string;
   role: 'owner' | 'manager' | 'cashier';
+  permissions?: StaffPermission[];
   active: boolean;
 }
 
@@ -152,6 +173,7 @@ export interface RefundRecord {
   reason?: string;
   note?: string;
   processorReference?: string;
+  staff?: { id: string; name: string };
 }
 
 export interface TransactionItem {
@@ -164,6 +186,7 @@ export interface TransactionItem {
   unitPriceInCents: number;
   taxable: boolean;
   note?: string;
+  metadata?: CartItem['metadata'];
 }
 
 export interface Transaction {
@@ -171,6 +194,7 @@ export interface Transaction {
   createdAt: string;
   subtotal: number;
   tax: number;
+  taxLines?: TaxLine[];
   total: number;
   currency: CurrencyCode;
   paymentMethod: PaymentMethod;
@@ -181,6 +205,16 @@ export interface Transaction {
   refundedAmount?: number;
   refundRecords?: RefundRecord[];
   paymentDetails?: StripePaymentDetails;
+  cashDetails?: {
+    receivedInCents: number;
+    changeGivenInCents: number;
+  };
+  staff?: { id: string; name: string };
+  serverSyncStatus?: 'pending' | 'synced' | 'failed';
+  serverOrderId?: string;
+  serverOrderNumber?: number;
+  serverSyncError?: string;
+  syncedAt?: string;
   items: TransactionItem[];
 }
 
@@ -196,6 +230,13 @@ export interface TaxDefinition {
   name: string;
   rate: number;
   enabled: boolean;
+}
+
+export interface TaxLine {
+  taxId: string;
+  name: string;
+  rate: number;
+  amount: number;
 }
 
 export interface HardwareSettings {

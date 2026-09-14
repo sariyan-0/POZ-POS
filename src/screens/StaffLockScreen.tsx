@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Pressable,
@@ -26,10 +26,6 @@ export function StaffLockScreen() {
   const [lockedUntil, setLockedUntil] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
 
-  const activeStaff = useMemo(
-    () => state.staffMembers.filter(staffMember => staffMember.active),
-    [state.staffMembers],
-  );
   const isLocked = lockedUntil !== null && lockedUntil > now;
   const remainingLockSeconds = isLocked
     ? Math.max(1, Math.ceil((lockedUntil - now) / 1000))

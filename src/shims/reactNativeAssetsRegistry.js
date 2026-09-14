@@ -1,3 +1,3 @@
 'use strict';
 
-module.exports = require('react-native/asset-registry');
+module.exports = require('react-native/src/asset-registry');
