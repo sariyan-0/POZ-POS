@@ -5,9 +5,11 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 }));
 
 import {
+  activationErrorMessage,
   readActivationPayload,
   resolveActivationServerUrl,
 } from '../src/services/api/deviceConnection';
+import { HttpResponseError } from '../src/services/api/ApiClient';
 
 describe('device activation payloads', () => {
   test('accepts a manual one-time code', () => {
@@ -47,5 +49,22 @@ describe('device activation payloads', () => {
       'oneregister://activate?server=http%3A%2F%2F10.0.2.2%3A3000&code=ABCD-2345',
     );
     expect(resolveActivationServerUrl(payload)).toBe('http://10.0.2.2:3000');
+  });
+
+  test('identifies a Cloudflare browser challenge instead of blaming the activation code', () => {
+    const error = new HttpResponseError(
+      403,
+      '<html><title>Just a moment...</title><script src="https://challenges.cloudflare.com"></script></html>',
+    );
+
+    expect(activationErrorMessage(error)).toContain('Cloudflare blocked this register app');
+  });
+
+  test('uses a JSON error message returned by the OneRegister API', () => {
+    const error = new HttpResponseError(404, {
+      error: { message: 'That code is invalid, expired, or already used.' },
+    });
+
+    expect(activationErrorMessage(error)).toBe('That code is invalid, expired, or already used.');
   });
 });

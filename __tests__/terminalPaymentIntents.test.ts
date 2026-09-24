@@ -6,6 +6,7 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 
 import {
   createBackendTerminalPaymentIntent,
+  describeTerminalPaymentError,
   getTerminalPaymentPreconditionError,
 } from '../src/services/api/terminalPaymentIntents';
 import { apiClient } from '../src/services/api/ApiClient';
@@ -79,6 +80,19 @@ describe('terminalPaymentIntents', () => {
         paymentInFlight: false,
       }),
     ).toBe('Stripe Terminal is not ready yet.');
+  });
+
+  test('turns Stripe decline codes into cashier-friendly guidance', () => {
+    expect(describeTerminalPaymentError(new Error('card_declined: insufficient_funds')))
+      .toEqual(expect.objectContaining({
+        title: 'Card declined',
+        message: expect.stringContaining('insufficient funds'),
+      }));
+
+    expect(describeTerminalPaymentError(new Error('incorrect_pin')))
+      .toEqual(expect.objectContaining({
+        title: 'PIN not accepted',
+      }));
   });
 
   test('parses nested payment intent payloads from the backend contract', async () => {

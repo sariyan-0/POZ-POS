@@ -20,6 +20,7 @@ import {
 import { useAppTheme } from '../theme';
 import { formatCurrency } from '../utils/format';
 import { createId } from '../utils/id';
+import { feedback } from '../services/feedback';
 
 export function CurrentSaleScreen() {
   const theme = useAppTheme();
@@ -39,7 +40,6 @@ export function CurrentSaleScreen() {
     upsertCustomer,
     selectCustomerForSale,
   } = usePOS();
-  const [showMenu, setShowMenu] = useState(false);
   const [showClearCartConfirm, setShowClearCartConfirm] = useState(false);
   const [showCustomerSheet, setShowCustomerSheet] = useState(false);
 
@@ -61,9 +61,17 @@ export function CurrentSaleScreen() {
             Current sale ({saleItemCount})
           </Text>
           <Pressable
+            accessibilityLabel="Clear cart"
             style={styles.ellipsisButton}
-            onPress={() => setShowMenu(true)}>
-            <MaterialDesignIcons color={theme.colors.text} name="dots-horizontal" size={26} />
+            onPress={() => {
+              feedback.warning();
+              setShowClearCartConfirm(true);
+            }}>
+            <MaterialDesignIcons
+              color={theme.colors.textMuted}
+              name="trash-can-outline"
+              size={23}
+            />
           </Pressable>
         </View>
 
@@ -225,55 +233,30 @@ export function CurrentSaleScreen() {
       <Modal
         animationType="fade"
         transparent
-        visible={showMenu}
-        onRequestClose={() => setShowMenu(false)}>
-        <View style={[styles.modalBackdrop, { backgroundColor: theme.colors.overlay }]}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowMenu(false)} />
-          <View
-            style={[
-              styles.menuCard,
-              { backgroundColor: theme.colors.surface, borderColor: theme.colors.border },
-            ]}>
-            <Pressable
-              onPress={() => {
-                setShowMenu(false);
-                setShowClearCartConfirm(true);
-              }}
-              style={[
-                styles.menuAction,
-                { backgroundColor: theme.colors.surfaceMuted },
-              ]}>
-              <MaterialDesignIcons color={theme.colors.danger} name="trash-can-outline" size={20} />
-              <Text style={[styles.menuActionLabel, { color: theme.colors.text }]}>
-                Clear cart
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => setShowMenu(false)}
-              style={[
-                styles.menuAction,
-                { backgroundColor: theme.colors.surfaceMuted },
-              ]}>
-              <MaterialDesignIcons color={theme.colors.textMuted} name="close" size={20} />
-              <Text style={[styles.menuActionLabel, { color: theme.colors.text }]}>
-                Nevermind
-              </Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
-        animationType="fade"
-        transparent
         visible={showClearCartConfirm}
         onRequestClose={() => setShowClearCartConfirm(false)}>
         <View style={[styles.modalBackdrop, { backgroundColor: theme.colors.overlay }]}>
+          <Pressable
+            accessibilityLabel="Never mind"
+            style={StyleSheet.absoluteFill}
+            onPress={() => setShowClearCartConfirm(false)}
+          />
           <View
             style={[
               styles.confirmCard,
               { backgroundColor: theme.colors.surface, borderColor: theme.colors.border },
             ]}>
+            <View
+              style={[
+                styles.confirmIcon,
+                { backgroundColor: `${theme.colors.danger}16` },
+              ]}>
+              <MaterialDesignIcons
+                color={theme.colors.danger}
+                name="trash-can-outline"
+                size={30}
+              />
+            </View>
             <Text style={[styles.confirmTitle, { color: theme.colors.text }]}>
               Clear current sale?
             </Text>
@@ -288,11 +271,12 @@ export function CurrentSaleScreen() {
                   { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border },
                 ]}>
                 <Text style={[styles.confirmButtonLabel, { color: theme.colors.text }]}>
-                  Nevermind
+                  Never mind
                 </Text>
               </Pressable>
               <Pressable
                 onPress={() => {
+                  feedback.warning();
                   clearCart();
                   setShowClearCartConfirm(false);
                   navigation.goBack();
@@ -783,53 +767,47 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     flex: 1,
-    justifyContent: 'flex-start',
-    alignItems: 'flex-end',
-    paddingTop: 88,
-    paddingHorizontal: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 22,
   },
   customerModalBackdrop: {
     flex: 1,
     justifyContent: 'flex-end',
   },
-  menuCard: {
-    width: 200,
-    borderRadius: 20,
-    borderWidth: 1,
-    padding: 10,
-    gap: 8,
-  },
-  menuAction: {
-    minHeight: 48,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  menuActionLabel: {
-    fontSize: 15,
-    fontWeight: '700',
-  },
   confirmCard: {
     width: '100%',
-    marginTop: '45%',
-    borderRadius: 24,
+    maxWidth: 420,
+    borderRadius: 28,
     borderWidth: 1,
-    padding: 18,
-    gap: 14,
+    padding: 22,
+    gap: 16,
+    alignItems: 'center',
+  },
+  confirmIcon: {
+    width: 62,
+    height: 62,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   confirmTitle: {
-    fontSize: 22,
-    fontWeight: '800',
+    fontSize: 24,
+    fontWeight: '900',
+    letterSpacing: -0.5,
+    textAlign: 'center',
   },
   confirmBody: {
     fontSize: 14,
-    lineHeight: 20,
+    lineHeight: 21,
+    textAlign: 'center',
+    maxWidth: 330,
   },
   confirmActions: {
     flexDirection: 'row',
     gap: 10,
+    width: '100%',
+    marginTop: 2,
   },
   confirmButton: {
     flex: 1,

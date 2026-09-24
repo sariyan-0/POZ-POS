@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  AccessibilityInfo,
   Animated,
   Easing,
   Pressable,
@@ -31,6 +32,9 @@ import { recordTransaction } from '../services/api/transactions';
 import { useAppTheme } from '../theme';
 import { createId } from '../utils/id';
 import { formatCurrency } from '../utils/format';
+import { feedback } from '../services/feedback';
+import { useDeviceConnection } from '../context/DeviceConnectionProvider';
+import { STRIPE_SETUP_REQUIRED_MESSAGE } from '../utils/userFacingError';
 
 type PaymentPhase =
   | 'select_method'
@@ -61,6 +65,15 @@ type ApprovedPaymentSummary = {
   last4?: string;
   readerLabel?: string;
   sourceLabel?: string;
+};
+
+type PaymentFailurePresentation = {
+  title: string;
+  body: string;
+  stageLabel?: string;
+  detail: string;
+  secondaryDetail?: string;
+  onRetry: () => void;
 };
 
 type IconName = React.ComponentProps<typeof MaterialDesignIcons>['name'];
@@ -202,6 +215,8 @@ export function MockPaymentScreen() {
     syncCustomers,
   } = usePOS();
   const terminal = useAppStripeTerminal();
+  const { connection } = useDeviceConnection();
+  const isStripeReady = connection?.business.stripeConnected === true;
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethod | null>(
     null,
   );
@@ -314,6 +329,24 @@ export function MockPaymentScreen() {
   }, []);
 
   async function startPayment(method: PaymentMethod) {
+    if (
+      (method === 'card_reader' || method === 'tap_to_pay') &&
+      !isStripeReady
+    ) {
+      setSelectedMethod(method);
+      setFailureTitle('Stripe setup required');
+      setFailureStageLabel('Payment setup');
+      setPhaseMessage(STRIPE_SETUP_REQUIRED_MESSAGE);
+      setGuidanceLines([
+        'Open the OneRegister Dashboard.',
+        'Go to Payments and finish Stripe setup.',
+        'Return to this register and refresh the Stripe status.',
+      ]);
+      setDebugLines([]);
+      setPhase('failed');
+      return;
+    }
+
     if (paymentInFlightRef.current) {
       setPhase('waiting');
       setPhaseMessage(
@@ -560,6 +593,7 @@ export function MockPaymentScreen() {
   }
 
   async function cancelPayment() {
+    feedback.warning();
     attemptRef.current += 1;
     paymentInFlightRef.current = false;
     readerPaymentInFlightRef.current = false;
@@ -579,6 +613,17 @@ export function MockPaymentScreen() {
     }
   }
 
+  function resetPaymentAttempt() {
+    setPhase('select_method');
+    setSelectedMethod(null);
+    setPhaseMessage('');
+    setFailureTitle('Payment Failed');
+    setFailureStageLabel('');
+    setGuidanceLines([]);
+    setDebugLines([]);
+    setApprovedPayment(null);
+  }
+
   return (
     <AppScreen title="Payment" contentStyle={styles.paymentScreenContent}>
       <PaymentHero
@@ -594,6 +639,35 @@ export function MockPaymentScreen() {
           terminal.isReaderConnected ? connectedReaderLabel : undefined
         }
         active={phase === 'waiting' && isReaderPayment}
+        visualState={
+          phase === 'waiting' && isReaderPayment
+            ? 'processing'
+            : phase === 'failed'
+            ? 'failed'
+            : phase === 'approved'
+            ? 'approved'
+            : 'idle'
+        }
+        failure={
+          phase === 'failed'
+            ? {
+                title: failureTitle,
+                body:
+                  phaseMessage || 'The payment did not complete successfully.',
+                stageLabel: failureStageLabel,
+                detail: guidanceLines.length
+                  ? guidanceLines.join('\n')
+                  : debugLines.length
+                  ? debugLines.join('\n')
+                  : 'The cart is still intact. No transaction was saved.',
+                secondaryDetail:
+                  guidanceLines.length && debugLines.length
+                    ? debugLines.join('\n')
+                    : undefined,
+                onRetry: resetPaymentAttempt,
+              }
+            : undefined
+        }
       />
 
       {phase === 'select_method' ? (
@@ -620,7 +694,7 @@ export function MockPaymentScreen() {
             iconName="cash"
             onPress={() => navigation.navigate('CashPayment')}
           />
-          {!cardReaderAvailable && !tapToPayAvailable ? (
+          {isStripeReady && !cardReaderAvailable && !tapToPayAvailable ? (
             <Pressable
               onPress={() =>
                 navigation.navigate('MoreSection', { section: 'hardware' })
@@ -729,37 +803,6 @@ export function MockPaymentScreen() {
         />
       ) : null}
 
-      {phase === 'failed' ? (
-        <ResultCard
-          title={failureTitle}
-          body={phaseMessage || 'The payment did not complete successfully.'}
-          statusLabel={failureStageLabel}
-          detail={
-            guidanceLines.length
-              ? guidanceLines.join('\n')
-              : debugLines.length
-              ? debugLines.join('\n')
-              : 'The cart is still intact. No transaction was saved.'
-          }
-          secondaryDetail={
-            guidanceLines.length && debugLines.length
-              ? debugLines.join('\n')
-              : undefined
-          }
-          actionLabel="Try Again"
-          onAction={() => {
-            setPhase('select_method');
-            setSelectedMethod(null);
-            setPhaseMessage('');
-            setFailureTitle('Payment Failed');
-            setFailureStageLabel('');
-            setGuidanceLines([]);
-            setDebugLines([]);
-            setApprovedPayment(null);
-          }}
-        />
-      ) : null}
-
       {phase === 'cancelled' ? (
         <ResultCard
           title="Payment Cancelled"
@@ -778,14 +821,37 @@ function PaymentHero({
   modeLabel,
   readerLabel,
   active,
+  visualState,
+  failure,
 }: {
   amountLabel: string;
   modeLabel: string;
   readerLabel?: string;
   active: boolean;
+  visualState: 'idle' | 'processing' | 'approved' | 'failed';
+  failure?: PaymentFailurePresentation;
 }) {
   const theme = useAppTheme();
   const glow = useRef(new Animated.Value(0)).current;
+  const cardShake = useRef(new Animated.Value(0)).current;
+  const cardDrop = useRef(new Animated.Value(0)).current;
+  const [reduceMotion, setReduceMotion] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    AccessibilityInfo.isReduceMotionEnabled().then(enabled => {
+      if (mounted) setReduceMotion(enabled);
+    });
+    const subscription = AccessibilityInfo.addEventListener(
+      'reduceMotionChanged',
+      setReduceMotion,
+    );
+
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
 
   useEffect(() => {
     const animation = Animated.loop(
@@ -805,14 +871,66 @@ function PaymentHero({
       ]),
     );
 
-    if (active) {
+    if (active && !reduceMotion) {
       animation.start();
     } else {
       glow.setValue(0);
     }
 
     return () => animation.stop();
-  }, [active, glow]);
+  }, [active, glow, reduceMotion]);
+
+  useEffect(() => {
+    cardShake.setValue(0);
+    cardDrop.setValue(0);
+    if (visualState !== 'failed') return undefined;
+
+    if (reduceMotion) {
+      cardDrop.setValue(1);
+      return undefined;
+    }
+
+    const animation = Animated.parallel([
+      Animated.sequence([
+        Animated.timing(cardShake, {
+          toValue: -1,
+          duration: 55,
+          useNativeDriver: true,
+        }),
+        Animated.timing(cardShake, {
+          toValue: 1,
+          duration: 75,
+          useNativeDriver: true,
+        }),
+        Animated.timing(cardShake, {
+          toValue: -0.65,
+          duration: 65,
+          useNativeDriver: true,
+        }),
+        Animated.timing(cardShake, {
+          toValue: 0.4,
+          duration: 55,
+          useNativeDriver: true,
+        }),
+        Animated.spring(cardShake, {
+          toValue: 0,
+          damping: 12,
+          stiffness: 220,
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.timing(cardDrop, {
+        toValue: 1,
+        duration: 480,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]);
+    animation.start();
+    return () => animation.stop();
+  }, [cardDrop, cardShake, reduceMotion, visualState]);
+
+  const failed = visualState === 'failed';
 
   return (
     <View style={[styles.heroCard, { backgroundColor: theme.colors.surface }]}>
@@ -838,15 +956,16 @@ function PaymentHero({
             style={[
               styles.heroStatusDot,
               {
-                backgroundColor:
-                  modeLabel === 'Reader needed'
-                    ? theme.colors.warning
-                    : theme.colors.success,
+                backgroundColor: failed
+                  ? theme.colors.danger
+                  : modeLabel === 'Reader needed'
+                  ? theme.colors.warning
+                  : theme.colors.success,
               },
             ]}
           />
           <Text style={[styles.heroStatusText, { color: theme.colors.text }]}>
-            {modeLabel}
+            {failed ? 'Not approved' : modeLabel}
           </Text>
         </View>
       </View>
@@ -856,7 +975,9 @@ function PaymentHero({
           style={[
             styles.readerGlow,
             {
-              backgroundColor: `${theme.colors.success}26`,
+              backgroundColor: `${
+                failed ? theme.colors.danger : theme.colors.success
+              }26`,
               opacity: active
                 ? glow.interpolate({
                     inputRange: [0, 1],
@@ -879,7 +1000,7 @@ function PaymentHero({
             styles.readerDevice,
             {
               backgroundColor: theme.colors.background,
-              borderColor: theme.colors.border,
+              borderColor: failed ? theme.colors.danger : theme.colors.border,
             },
           ]}
         >
@@ -890,9 +1011,9 @@ function PaymentHero({
             ]}
           >
             <MaterialDesignIcons
-              color={theme.colors.text}
-              name="contactless-payment"
-              size={28}
+              color={failed ? theme.colors.danger : theme.colors.text}
+              name={failed ? 'credit-card-off-outline' : 'contactless-payment'}
+              size={failed ? 32 : 28}
             />
           </View>
           <View style={styles.readerDots}>
@@ -923,14 +1044,32 @@ function PaymentHero({
               backgroundColor: theme.colors.accent,
               transform: [
                 {
-                  translateY: active
+                  translateX: cardShake.interpolate({
+                    inputRange: [-1, 0, 1],
+                    outputRange: [-14, 0, 14],
+                  }),
+                },
+                {
+                  translateY: failed
+                    ? cardDrop.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, 38],
+                      })
+                    : active
                     ? glow.interpolate({
                         inputRange: [0, 1],
                         outputRange: [6, -4],
                       })
                     : 0,
                 },
+                { rotate: failed ? '17deg' : '8deg' },
               ],
+              opacity: failed
+                ? cardDrop.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [1, 0.46],
+                  })
+                : 1,
             },
           ]}
         >
@@ -956,6 +1095,119 @@ function PaymentHero({
           {readerLabel}
         </Text>
       ) : null}
+
+      {failed && failure ? <PaymentFailurePanel {...failure} /> : null}
+    </View>
+  );
+}
+
+function PaymentFailurePanel({
+  title,
+  body,
+  stageLabel,
+  detail,
+  secondaryDetail,
+  onRetry,
+}: PaymentFailurePresentation) {
+  const theme = useAppTheme();
+  const [showDetail, setShowDetail] = useState(false);
+  const hasExpandableDetail = Boolean(detail || secondaryDetail);
+
+  useEffect(() => {
+    feedback.paymentFailure();
+  }, []);
+
+  return (
+    <View
+      accessibilityLiveRegion="assertive"
+      style={[styles.failurePanel, { borderTopColor: theme.colors.border }]}
+    >
+      {stageLabel ? (
+        <Text style={[styles.failureStage, { color: theme.colors.danger }]}>
+          Issue during {stageLabel}
+        </Text>
+      ) : null}
+      <Text style={[styles.failureTitle, { color: theme.colors.text }]}>
+        {title}
+      </Text>
+      <Text style={[styles.failureReason, { color: theme.colors.text }]}>
+        {body}
+      </Text>
+
+      {hasExpandableDetail ? (
+        <Pressable
+          accessibilityLabel={
+            showDetail ? 'Hide payment details' : 'Show payment details'
+          }
+          accessibilityRole="button"
+          accessibilityState={{ expanded: showDetail }}
+          onPress={() => {
+            feedback.selection();
+            setShowDetail(current => !current);
+          }}
+          style={({ pressed }) => [
+            styles.failureDetailToggle,
+            { borderColor: theme.colors.border },
+            pressed ? styles.pressedControl : null,
+          ]}
+        >
+          <Text
+            style={[
+              styles.failureDetailToggleText,
+              { color: theme.colors.textMuted },
+            ]}
+          >
+            {showDetail ? 'Hide payment details' : 'Payment details'}
+          </Text>
+          <MaterialDesignIcons
+            color={theme.colors.textMuted}
+            name={showDetail ? 'chevron-up' : 'chevron-down'}
+            size={22}
+          />
+        </Pressable>
+      ) : null}
+
+      {showDetail ? (
+        <View style={styles.failureDetailContent}>
+          {detail ? (
+            <Text
+              style={[styles.failureDetailText, { color: theme.colors.text }]}
+            >
+              {detail}
+            </Text>
+          ) : null}
+          {secondaryDetail ? (
+            <Text
+              style={[
+                styles.secondaryDetailText,
+                { color: theme.colors.textMuted },
+              ]}
+            >
+              {secondaryDetail}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+
+      <Pressable
+        accessibilityLabel="Try payment again"
+        accessibilityRole="button"
+        onPress={() => {
+          feedback.light();
+          onRetry();
+        }}
+        style={({ pressed }) => [
+          styles.resultAction,
+          { backgroundColor: theme.colors.accent },
+          pressed ? styles.pressedControl : null,
+        ]}
+      >
+        <Text
+          style={[styles.resultActionText, { color: theme.colors.accentText }]}
+        >
+          Try payment again
+        </Text>
+      </Pressable>
     </View>
   );
 }
@@ -974,7 +1226,10 @@ function MethodCard({
   const theme = useAppTheme();
   return (
     <Pressable
-      onPress={onPress}
+      onPress={() => {
+        feedback.light();
+        onPress();
+      }}
       style={[
         styles.methodCard,
         {
@@ -1036,6 +1291,7 @@ function ApprovedPaymentCard({
   const brandAccent = getBrandAccent(brand, theme.colors);
 
   useEffect(() => {
+    feedback.paymentSuccess();
     Animated.parallel([
       Animated.spring(scale, {
         toValue: 1,
@@ -1210,23 +1466,17 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 function ResultCard({
   title,
   body,
-  statusLabel,
   detail,
-  secondaryDetail,
   actionLabel,
   onAction,
 }: {
   title: string;
   body: string;
-  statusLabel?: string;
   detail: string;
-  secondaryDetail?: string;
   actionLabel: string;
   onAction: () => void;
 }) {
   const theme = useAppTheme();
-  const [showDetail, setShowDetail] = useState(false);
-  const hasExpandableDetail = Boolean(detail || secondaryDetail);
 
   return (
     <View
@@ -1239,78 +1489,31 @@ function ResultCard({
         },
       ]}
     >
-      <Text
-        style={{ color: theme.colors.text, fontSize: 24, fontWeight: '900' }}
-      >
+      <Text style={[styles.resultTitle, { color: theme.colors.text }]}>
         {title}
       </Text>
-      {statusLabel ? (
-        <Text
-          style={{
-            color: theme.colors.textMuted,
-            fontSize: 12,
-            fontWeight: '800',
-            textTransform: 'uppercase',
-            letterSpacing: 0.8,
-          }}
-        >
-          Failed at {statusLabel}
-        </Text>
-      ) : null}
-      <Text style={{ color: theme.colors.textMuted, textAlign: 'center' }}>
+      <Text style={[styles.resultBody, { color: theme.colors.textMuted }]}>
         {body}
       </Text>
-      {hasExpandableDetail ? (
-        <Pressable
-          onPress={() => setShowDetail(current => !current)}
-          style={[
-            styles.detailToggle,
-            {
-              backgroundColor: theme.colors.surfaceMuted,
-              borderColor: theme.colors.border,
-            },
-          ]}
-        >
-          <Text style={{ color: theme.colors.text, fontWeight: '800' }}>
-            {showDetail ? 'Hide details' : 'Show details'}
-          </Text>
-          <MaterialDesignIcons
-            color={theme.colors.textMuted}
-            name={showDetail ? 'chevron-up' : 'chevron-down'}
-            size={22}
-          />
-        </Pressable>
-      ) : null}
-      {showDetail && detail ? (
-        <Text
-          style={[
-            styles.detailText,
-            {
-              color: theme.colors.text,
-            },
-          ]}
-        >
-          {detail}
-        </Text>
-      ) : null}
-      {showDetail && secondaryDetail ? (
-        <Text
-          style={[
-            styles.secondaryDetailText,
-            {
-              color: theme.colors.textMuted,
-            },
-          ]}
-        >
-          {secondaryDetail}
-        </Text>
-      ) : null}
-      <Text
-        style={[styles.inlineAction, { color: theme.colors.text }]}
-        onPress={onAction}
-      >
-        {actionLabel}
+      <Text style={[styles.resultDetail, { color: theme.colors.text }]}>
+        {detail}
       </Text>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => {
+          feedback.light();
+          onAction();
+        }}
+        style={({ pressed }) => [
+          styles.resultAction,
+          { backgroundColor: theme.colors.surfaceMuted },
+          pressed ? styles.pressedControl : null,
+        ]}
+      >
+        <Text style={[styles.resultActionText, { color: theme.colors.text }]}>
+          {actionLabel}
+        </Text>
+      </Pressable>
     </View>
   );
 }
@@ -1320,10 +1523,94 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   block: {
-    borderRadius: 18,
-    padding: 18,
-    gap: 10,
+    borderRadius: 30,
+    paddingHorizontal: 22,
+    gap: 12,
   },
+  resultTitle: {
+    fontSize: 26,
+    lineHeight: 32,
+    fontWeight: '900',
+    textAlign: 'center',
+    letterSpacing: -0.6,
+  },
+  resultBody: {
+    textAlign: 'center',
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  resultDetail: {
+    textAlign: 'center',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
+  failurePanel: {
+    width: '100%',
+    borderTopWidth: 1,
+    paddingTop: 22,
+    gap: 12,
+    alignItems: 'center',
+  },
+  failureTitle: {
+    fontSize: 28,
+    lineHeight: 34,
+    fontWeight: '900',
+    letterSpacing: -0.8,
+    textAlign: 'center',
+  },
+  failureStage: {
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    letterSpacing: 0.9,
+    textAlign: 'center',
+  },
+  failureReason: {
+    textAlign: 'center',
+    fontSize: 17,
+    lineHeight: 25,
+    fontWeight: '700',
+    maxWidth: 360,
+  },
+  failureDetailToggle: {
+    width: '100%',
+    minHeight: 50,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    paddingHorizontal: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  failureDetailToggleText: {
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  failureDetailContent: {
+    width: '100%',
+    gap: 10,
+    paddingHorizontal: 2,
+  },
+  failureDetailText: {
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
+  pressedControl: {
+    opacity: 0.78,
+  },
+  resultAction: {
+    width: '100%',
+    minHeight: 56,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+    marginTop: 4,
+  },
+  resultActionText: { fontSize: 16, fontWeight: '900' },
   heroCard: {
     borderRadius: 30,
     padding: 22,
@@ -1602,43 +1889,10 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },
-  amount: {
-    fontSize: 42,
-    fontWeight: '900',
-    letterSpacing: -1.5,
-  },
-  inlineAction: {
-    fontSize: 16,
-    fontWeight: '800',
-    marginTop: 4,
-  },
-  tipCard: {
-    borderWidth: 1,
-    borderRadius: 18,
-    padding: 14,
-    gap: 8,
-  },
   readerPulse: {
     width: 12,
     height: 12,
     borderRadius: 6,
-  },
-  detailToggle: {
-    minWidth: 180,
-    borderWidth: 1,
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  detailText: {
-    fontWeight: '700',
-    backgroundColor: 'transparent',
-    textAlign: 'center',
-    lineHeight: 20,
   },
   secondaryDetailText: {
     textAlign: 'center',

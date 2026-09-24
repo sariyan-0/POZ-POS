@@ -18,6 +18,8 @@ import { useAppStripeTerminal } from '../terminal/StripeTerminalProvider';
 import { useAppTheme } from '../theme';
 import { getProductTileInitials, getReadableTileTextColor } from '../utils/productTile';
 import { useDeviceConnection } from '../context/DeviceConnectionProvider';
+import { StripeSetupNotice } from './StripeSetupNotice';
+import { feedback } from '../services/feedback';
 
 type IconName = React.ComponentProps<typeof MaterialDesignIcons>['name'];
 
@@ -77,12 +79,14 @@ export function AppScreen({
   rightSlot,
   contentStyle,
   refreshControl,
+  hideStripeSetupNotice = false,
 }: PropsWithChildren<{
   title: string;
   subtitle?: string;
   rightSlot?: React.ReactNode;
   contentStyle?: StyleProp<ViewStyle>;
   refreshControl?: React.ReactElement;
+  hideStripeSetupNotice?: boolean;
 }>) {
   const insets = useSafeAreaInsets();
   const theme = useAppTheme();
@@ -107,6 +111,7 @@ export function AppScreen({
         </View>
         {rightSlot}
       </View>
+      {!hideStripeSetupNotice ? <StripeSetupNotice /> : null}
       {children}
     </ScrollView>
   );
@@ -248,7 +253,10 @@ export function SegmentedTabs({
         return (
           <Pressable
             key={option.key}
-            onPress={() => onChange(option.key)}
+            onPress={() => {
+              feedback.selection();
+              onChange(option.key);
+            }}
             style={[
               styles.segmentButton,
               selected
@@ -446,7 +454,10 @@ export function PrimaryPillButton({
   return (
     <Pressable
       disabled={disabled}
-      onPress={onPress}
+      onPress={() => {
+        feedback.light();
+        onPress();
+      }}
       style={[
         styles.primaryPillButton,
         { backgroundColor: theme.colors.accent },
@@ -502,6 +513,7 @@ export const styles = StyleSheet.create({
   checkoutHeader: {
     paddingHorizontal: 16,
     paddingBottom: 10,
+    gap: 8,
   },
   headerUtilityRow: {
     flexDirection: 'row',

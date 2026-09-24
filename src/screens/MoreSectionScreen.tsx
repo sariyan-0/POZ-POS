@@ -67,6 +67,7 @@ export function MoreSectionScreen() {
   if (params.section === 'hardware') {
     return (
       <AppScreen
+        hideStripeSetupNotice
         title="Readers"
         subtitle="Manage Stripe Terminal readers, Tap to Pay, and terminal locations.">
         <DeveloperTerminalPanel />

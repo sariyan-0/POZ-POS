@@ -4,6 +4,7 @@ import {
   Image,
   Modal,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -28,6 +29,7 @@ import { useRootNavigation } from '../navigation/AppNavigator';
 import { useAppTheme } from '../theme';
 import { formatCurrency } from '../utils/format';
 import { getProductTileInitials, getReadableTileTextColor } from '../utils/productTile';
+import { feedback } from '../services/feedback';
 
 type CheckoutTab = 'keypad' | 'library' | 'favorites';
 type LibrarySectionKey =
@@ -71,6 +73,8 @@ export function CheckoutScreen() {
     addDiscountToCart,
     authorizePermissionPin,
     hasPermission,
+    syncCatalog,
+    catalogSyncStatus,
   } = usePOS();
   const [tab, setTab] = useState<CheckoutTab>('keypad');
   const [search, setSearch] = useState('');
@@ -203,10 +207,12 @@ export function CheckoutScreen() {
     (!customizationIsMass || customizationMassQuantity > 0);
 
   function appendDigit(value: string) {
+    feedback.selection();
     setEntryDigits(current => `${current}${value}`.replace(/^0+(?=\d)/, ''));
   }
 
   function clearEntry() {
+    feedback.selection();
     setEntryDigits('');
   }
 
@@ -214,6 +220,7 @@ export function CheckoutScreen() {
     if (!pendingCustomAmountInCents) {
       return;
     }
+    feedback.light();
     addCustomAmountToCart(pendingCustomAmountInCents, note);
     setEntryDigits('');
     setNote('');
@@ -264,6 +271,7 @@ export function CheckoutScreen() {
   }
 
   function handleProductPress(product: Product) {
+    feedback.light();
     if (
       product.unitType === 'mass' ||
       product.optionSets?.length ||
@@ -317,6 +325,8 @@ export function CheckoutScreen() {
       return;
     }
 
+    feedback.light();
+
     addProductToCart(customizingProduct.id, {
       quantity: customizationIsMass ? customizationMassQuantity : customizationQuantity,
       unitPriceInCents: customizingProduct.priceInCents + customizationExtraInCents,
@@ -341,6 +351,7 @@ export function CheckoutScreen() {
   function finishApplyDiscount(discount: Discount, authorizedByStaffId?: string) {
     const result = addDiscountToCart(discount.id, authorizedByStaffId);
     if (result.ok) {
+      feedback.light();
       closeRestrictedDiscountFlow();
     }
   }
@@ -348,6 +359,7 @@ export function CheckoutScreen() {
   function tryManagerUnlock(candidatePin: string) {
     const matchedStaff = authorizePermissionPin(candidatePin, 'apply_discounts');
     if (!matchedStaff || !restrictedDiscount) {
+      feedback.warning();
       setManagerPin('');
       setDiscountPinError('Wrong PIN.');
       Animated.sequence([
@@ -387,6 +399,17 @@ export function CheckoutScreen() {
     }
 
     finishApplyDiscount(discount);
+  }
+
+  async function refreshLibrary() {
+    if (catalogSyncStatus === 'syncing') return;
+    feedback.selection();
+    try {
+      await syncCatalog();
+      feedback.light();
+    } catch {
+      feedback.warning();
+    }
   }
 
   return (
@@ -511,7 +534,16 @@ export function CheckoutScreen() {
           ) : tab === 'favorites' ? (
             <View style={{ flex: 1, paddingBottom: floatingButtonReserve }}>
               <ScrollView
+                alwaysBounceVertical
                 showsVerticalScrollIndicator={false}
+                refreshControl={
+                  <RefreshControl
+                    refreshing={catalogSyncStatus === 'syncing'}
+                    onRefresh={() => refreshLibrary().catch(() => undefined)}
+                    tintColor={theme.colors.success}
+                    colors={[theme.colors.success]}
+                  />
+                }
                 contentContainerStyle={styles.favoritesScrollContent}>
                 <View style={styles.favoritesGrid}>
                   {favoriteGridProducts.map(product => {
@@ -581,7 +613,16 @@ export function CheckoutScreen() {
             <View style={{ flex: 1, paddingBottom: floatingButtonReserve }}>
               <SearchRow value={search} onChangeText={setSearch} />
               <ScrollView
+                alwaysBounceVertical
                 showsVerticalScrollIndicator={false}
+                refreshControl={
+                  <RefreshControl
+                    refreshing={catalogSyncStatus === 'syncing'}
+                    onRefresh={() => refreshLibrary().catch(() => undefined)}
+                    tintColor={theme.colors.success}
+                    colors={[theme.colors.success]}
+                  />
+                }
                 contentContainerStyle={styles.libraryScrollContent}>
                 <View
                   style={[

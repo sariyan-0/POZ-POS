@@ -18,6 +18,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppStripeTerminal } from '../terminal/StripeTerminalProvider';
 import { formatTerminalLocationAddress } from '../terminal/terminalLocations';
 import { useAppTheme } from '../theme';
+import { useDeviceConnection } from '../context/DeviceConnectionProvider';
+import { feedback } from '../services/feedback';
 
 type ReaderMode = 'tap_to_pay' | 'bluetooth' | 'internet' | 'simulated';
 type SetupStep = 'type' | 'location' | 'discovery' | 'connecting' | 'success';
@@ -100,6 +102,8 @@ function getReaderIdentifier(
 export function DeveloperTerminalPanel() {
   const theme = useAppTheme();
   const terminal = useAppStripeTerminal();
+  const { connection, error: connectionRefreshError, isChecking, refresh } = useDeviceConnection();
+  const isStripeReady = connection?.business.stripeConnected === true;
   const insets = useSafeAreaInsets();
   const hasPresentedSetup = useRef(false);
   const observedAutomaticReconnect = useRef(false);
@@ -109,6 +113,7 @@ export function DeveloperTerminalPanel() {
   );
   const [connectingReaderId, setConnectingReaderId] = useState('');
   const [connectingReaderLabel, setConnectingReaderLabel] = useState('Reader');
+  const [isCancellingConnection, setIsCancellingConnection] = useState(false);
   const [showCreateLocation, setShowCreateLocation] = useState(false);
   const [showAdvancedLocation, setShowAdvancedLocation] = useState(false);
   const [manualLocationId, setManualLocationId] = useState('');
@@ -149,6 +154,7 @@ export function DeveloperTerminalPanel() {
 
   useEffect(() => {
     if (
+      isStripeReady &&
       terminal.status === 'ready' &&
       !terminal.connectedReader &&
       terminal.connectionStatus === 'notConnected' &&
@@ -165,7 +171,15 @@ export function DeveloperTerminalPanel() {
     hasPreferredReader,
     terminal.status,
     terminal.terminalConfig.readerMode,
+    isStripeReady,
   ]);
+
+  useEffect(() => {
+    if (!isStripeReady) {
+      setStep(null);
+      hasPresentedSetup.current = false;
+    }
+  }, [isStripeReady]);
 
   useEffect(() => {
     if (automaticReconnectIsVisible) {
@@ -198,6 +212,7 @@ export function DeveloperTerminalPanel() {
     step !== null || updateIsVisible || automaticReconnectIsVisible;
 
   function startSetup() {
+    if (!isStripeReady) return;
     setSelectedMode(terminal.terminalConfig.readerMode);
     setConnectingReaderId('');
     setShowCreateLocation(false);
@@ -209,8 +224,13 @@ export function DeveloperTerminalPanel() {
     if (
       terminal.connectionStatus === 'connecting' ||
       terminal.connectionStatus === 'reconnecting' ||
-      updateIsVisible ||
       automaticReconnectIsVisible
+    ) {
+      cancelConnection().catch(() => undefined);
+      return;
+    }
+    if (
+      updateIsVisible
     ) {
       return;
     }
@@ -219,7 +239,22 @@ export function DeveloperTerminalPanel() {
     setShowAdvancedLocation(false);
   }
 
+  async function cancelConnection() {
+    if (isCancellingConnection || updateIsVisible) return;
+    feedback.warning();
+    setIsCancellingConnection(true);
+    observedAutomaticReconnect.current = false;
+    try {
+      await terminal.forgetReader();
+      setConnectingReaderId('');
+      setStep(null);
+    } finally {
+      setIsCancellingConnection(false);
+    }
+  }
+
   async function continueFromReaderType() {
+    if (!isStripeReady) return;
     if (
       terminal.connectedReader ||
       terminal.connectionStatus === 'connected' ||
@@ -243,11 +278,13 @@ export function DeveloperTerminalPanel() {
   async function chooseLocation(
     location: ReturnType<typeof useAppStripeTerminal>['locations'][number],
   ) {
+    if (!isStripeReady) return;
     await terminal.selectLocation(location);
     await startDiscovery();
   }
 
   async function applyManualLocation() {
+    if (!isStripeReady) return;
     const locationId = manualLocationId.trim();
     if (!locationId) return;
     await terminal.saveTerminalConfig({
@@ -260,6 +297,7 @@ export function DeveloperTerminalPanel() {
   }
 
   async function createAndUseLocation() {
+    if (!isStripeReady) return;
     await terminal.createLocation({
       displayName: newLocationName.trim(),
       address: {
@@ -282,11 +320,13 @@ export function DeveloperTerminalPanel() {
   }
 
   async function startDiscovery() {
+    if (!isStripeReady) return;
     setStep('discovery');
     await terminal.discoverReaders().catch(() => undefined);
   }
 
   async function connectReader(readerId: string, label: string) {
+    if (!isStripeReady) return;
     setConnectingReaderId(readerId);
     setConnectingReaderLabel(label);
     setStep('connecting');
@@ -304,6 +344,54 @@ export function DeveloperTerminalPanel() {
 
   const activeMode = modeDetails(selectedMode);
   const savedMode = modeDetails(terminal.terminalConfig.readerMode);
+
+  if (!isStripeReady) {
+    return (
+      <View
+        accessibilityRole="alert"
+        style={[
+          styles.stripeBlocker,
+          {
+            backgroundColor: theme.colors.surface,
+            borderColor: `${theme.colors.warning}70`,
+          },
+        ]}>
+        <View style={[styles.stripeBlockerIcon, { backgroundColor: `${theme.colors.warning}22` }]}>
+          <MaterialDesignIcons
+            color={theme.colors.warning}
+            name="credit-card-off-outline"
+            size={32}
+          />
+        </View>
+        <Text style={[styles.stripeBlockerKicker, { color: theme.colors.warning }]}>
+          PAYMENTS NOT CONFIGURED
+        </Text>
+        <Text style={[styles.stripeBlockerTitle, { color: theme.colors.text }]}>
+          Connect Stripe before setting up a reader
+        </Text>
+        <Text style={[styles.stripeBlockerBody, { color: theme.colors.textMuted }]}>
+          Reader setup is locked until Stripe onboarding is complete. Open the OneRegister Dashboard, go to Payments, and follow the Stripe setup steps.
+        </Text>
+        <View style={[styles.stripeSteps, { backgroundColor: theme.colors.surfaceMuted }]}>
+          <Text style={[styles.stripeStep, { color: theme.colors.text }]}>1  Open OneRegister Dashboard</Text>
+          <Text style={[styles.stripeStep, { color: theme.colors.text }]}>2  Go to Payments and finish Stripe setup</Text>
+          <Text style={[styles.stripeStep, { color: theme.colors.text }]}>3  Return here and refresh the status</Text>
+        </View>
+        <PrimaryButton
+          disabled={isChecking}
+          icon="refresh"
+          label={isChecking ? 'Checking Stripe status…' : 'Refresh Stripe status'}
+          onPress={() => refresh().catch(() => undefined)}
+        />
+        {connectionRefreshError ? (
+          <InlineError message={connectionRefreshError} />
+        ) : null}
+        <Text style={[styles.stripeBlockerFootnote, { color: theme.colors.textMuted }]}>
+          Cash payments are still available while Stripe is being configured.
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.page}>
@@ -510,6 +598,8 @@ export function DeveloperTerminalPanel() {
                   : 'SECURE CONNECTION IN PROGRESS'
               }
               error={!!terminal.connectionError}
+              cancelling={isCancellingConnection}
+              onCancel={() => cancelConnection().catch(() => undefined)}
               onRetry={retryConnection}
               onBack={() => setStep('discovery')}
             />
@@ -923,38 +1013,40 @@ export function DeveloperTerminalPanel() {
                       }
                     />
                   ) : null}
-                  {terminal.discoveredReaders.map((reader, index) => {
-                    const identifier = getReaderIdentifier(reader, index);
-                    const label =
-                      reader.label ||
-                      reader.serialNumber ||
-                      (reader.simulated
-                        ? 'Simulator'
-                        : formatDeviceType(reader.deviceType));
-                    return (
-                      <ReaderChoice
-                        key={identifier}
-                        icon={
-                          selectedMode === 'internet'
-                            ? 'tablet-dashboard'
-                            : selectedMode === 'simulated'
-                            ? 'test-tube'
-                            : 'credit-card-wireless-outline'
-                        }
-                        title={label}
-                        detail={`${
-                          reader.simulated
-                            ? 'Test reader'
-                            : formatDeviceType(reader.deviceType)
-                        } • ${reader.status}`}
-                        onPress={() =>
-                          connectReader(identifier, label).catch(
-                            () => undefined,
-                          )
-                        }
-                      />
-                    );
-                  })}
+                  {selectedMode !== 'tap_to_pay'
+                    ? terminal.discoveredReaders.map((reader, index) => {
+                        const identifier = getReaderIdentifier(reader, index);
+                        const label =
+                          reader.label ||
+                          reader.serialNumber ||
+                          (reader.simulated
+                            ? 'Simulator'
+                            : formatDeviceType(reader.deviceType));
+                        return (
+                          <ReaderChoice
+                            key={identifier}
+                            icon={
+                              selectedMode === 'internet'
+                                ? 'tablet-dashboard'
+                                : selectedMode === 'simulated'
+                                ? 'test-tube'
+                                : 'credit-card-wireless-outline'
+                            }
+                            title={label}
+                            detail={`${
+                              reader.simulated
+                                ? 'Test reader'
+                                : formatDeviceType(reader.deviceType)
+                            } • ${reader.status}`}
+                            onPress={() =>
+                              connectReader(identifier, label).catch(
+                                () => undefined,
+                              )
+                            }
+                          />
+                        );
+                      })
+                    : null}
                   {terminal.discoveryError ? (
                     <InlineError message={terminal.discoveryError} />
                   ) : null}
@@ -1062,6 +1154,8 @@ function ConnectionStateScreen({
   onRetry,
   onBack,
   onDone,
+  onCancel,
+  cancelling,
 }: {
   title: string;
   body: string;
@@ -1073,6 +1167,8 @@ function ConnectionStateScreen({
   onRetry?: () => void;
   onBack?: () => void;
   onDone?: () => void;
+  onCancel?: () => void;
+  cancelling?: boolean;
 }) {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
@@ -1268,19 +1364,28 @@ function ConnectionStateScreen({
           />
         </View>
       ) : (
-        <View
-          style={[styles.keepOpen, { backgroundColor: theme.colors.surface }]}
-        >
-          <MaterialDesignIcons
-            color={theme.colors.textMuted}
-            name="lock-outline"
-            size={18}
-          />
-          <Text
-            style={[styles.keepOpenText, { color: theme.colors.textMuted }]}
+        <View style={styles.stateActions}>
+          <View
+            style={[styles.keepOpen, { backgroundColor: theme.colors.surface }]}
           >
-            Keep OneRegister open during setup
-          </Text>
+            <MaterialDesignIcons
+              color={theme.colors.textMuted}
+              name="lock-outline"
+              size={18}
+            />
+            <Text
+              style={[styles.keepOpenText, { color: theme.colors.textMuted }]}
+            >
+              Keep OneRegister open during setup
+            </Text>
+          </View>
+          {onCancel ? (
+            <SecondaryButton
+              disabled={cancelling}
+              label={cancelling ? 'Cancelling…' : 'Cancel connection'}
+              onPress={onCancel}
+            />
+          ) : null}
         </View>
       )}
     </View>
@@ -1453,20 +1558,37 @@ function PrimaryButton({
 function SecondaryButton({
   label,
   onPress,
+  destructive = false,
+  disabled = false,
 }: {
   label: string;
   onPress: () => void;
+  destructive?: boolean;
+  disabled?: boolean;
 }) {
   const theme = useAppTheme();
   return (
     <Pressable
+      disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
         styles.secondaryButton,
-        { borderColor: theme.colors.border, opacity: pressed ? 0.7 : 1 },
+        {
+          borderColor: destructive
+            ? `${theme.colors.danger}70`
+            : theme.colors.border,
+          backgroundColor: destructive
+            ? `${theme.colors.danger}0D`
+            : 'transparent',
+          opacity: disabled ? 0.45 : pressed ? 0.7 : 1,
+        },
       ]}
     >
-      <Text style={[styles.secondaryButtonText, { color: theme.colors.text }]}>
+      <Text
+        style={[
+          styles.secondaryButtonText,
+          { color: destructive ? theme.colors.danger : theme.colors.text },
+        ]}>
         {label}
       </Text>
     </Pressable>
@@ -1542,6 +1664,26 @@ function InlineError({ message }: { message: string }) {
 
 const styles = StyleSheet.create({
   page: { gap: 16 },
+  stripeBlocker: {
+    borderWidth: 1,
+    borderRadius: 26,
+    padding: 22,
+    gap: 12,
+  },
+  stripeBlockerIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  stripeBlockerKicker: { fontSize: 11, fontWeight: '900', letterSpacing: 1.05 },
+  stripeBlockerTitle: { fontSize: 27, lineHeight: 32, fontWeight: '900', letterSpacing: -0.7 },
+  stripeBlockerBody: { fontSize: 15, lineHeight: 22 },
+  stripeSteps: { borderRadius: 18, padding: 16, gap: 12, marginVertical: 4 },
+  stripeStep: { fontSize: 13, lineHeight: 19, fontWeight: '700' },
+  stripeBlockerFootnote: { fontSize: 12, lineHeight: 18, textAlign: 'center' },
   homeStack: { gap: 14 },
   readerHero: {
     borderRadius: 28,

@@ -29,9 +29,17 @@ import {
   loadTerminalLocations,
   TerminalLocationSummary,
 } from './terminalLocations';
-import { fetchStripeTerminalConnectionToken } from './stripeTerminalToken';
+import {
+  fetchStripeTerminalConnectionToken,
+  getLastStripeTerminalConnectionTokenError,
+} from './stripeTerminalToken';
 import { backendConfigService } from '../config/BackendConfigService';
 import { authCredentialStore } from '../services/api/AuthCredentialStore';
+import { useDeviceConnection } from '../context/DeviceConnectionProvider';
+import {
+  getSafeStripeError,
+  STRIPE_SETUP_REQUIRED_MESSAGE,
+} from '../utils/userFacingError';
 
 type StripeTerminalStatus =
   | 'idle'
@@ -123,6 +131,8 @@ const StripeTerminalContext = createContext<
 function StripeTerminalBootstrap({
   children,
 }: PropsWithChildren): React.JSX.Element {
+  const { connection } = useDeviceConnection();
+  const isStripeReady = connection?.business.stripeConnected === true;
   const [status, setStatus] = useState<StripeTerminalStatus>('idle');
   const [initializationError, setInitializationError] = useState<string | null>(
     null,
@@ -170,6 +180,7 @@ function StripeTerminalBootstrap({
     terminalConfigService.getSnapshot(),
   );
   const readersRef = useRef<Reader.Type[]>([]);
+  const connectionAttemptRef = useRef(0);
   const autoConnectAttemptedRef = useRef(false);
   const autoConnectPreferredReaderRef = useRef<() => Promise<void>>(
     async () => undefined,
@@ -202,7 +213,7 @@ function StripeTerminalBootstrap({
     },
     onFinishDiscoveringReaders: error => {
       if (error) {
-        setDiscoveryError(error.message);
+        setDiscoveryError(getSafeStripeError(error));
         setDiscoveryStatus('error');
         return;
       }
@@ -284,7 +295,7 @@ function StripeTerminalBootstrap({
     onDidFinishInstallingUpdate: result => {
       if (result.error) {
         setReaderUpdateStatus('error');
-        setConnectionError(result.error.message);
+        setConnectionError(getSafeStripeError(result.error));
         setReaderConnectionMessage(null);
         return;
       }
@@ -369,6 +380,9 @@ function StripeTerminalBootstrap({
     setConnectedReader(sdkConnectedReader ?? null);
 
     if (sdkConnectedReader?.batteryLevel !== undefined) {
+      setConnectionStatus('connected');
+      setConnectionError(null);
+      setReaderConnectionMessage(null);
       setBatteryLevel(normalizeBatteryLevel(sdkConnectedReader.batteryLevel));
       setBatteryStatus(
         'batteryStatus' in sdkConnectedReader
@@ -378,7 +392,17 @@ function StripeTerminalBootstrap({
       return;
     }
 
+    if (sdkConnectedReader) {
+      setConnectionStatus('connected');
+      setConnectionError(null);
+      setReaderConnectionMessage(null);
+      return;
+    }
+
     if (!sdkConnectedReader) {
+      setConnectionStatus(current =>
+        current === 'connected' ? 'notConnected' : current,
+      );
       setBatteryLevel(null);
       setBatteryStatus(null);
     }
@@ -417,6 +441,20 @@ function StripeTerminalBootstrap({
   useEffect(() => {
     let isMounted = true;
 
+    if (!isStripeReady) {
+      setInitializationError(null);
+      setDiscoveryError(null);
+      setConnectionError(null);
+      setStatus('idle');
+      setDiscoveryStatus('idle');
+      setConnectionStatus('notConnected');
+      setConnectedReader(null);
+      readersRef.current = [];
+      return () => {
+        isMounted = false;
+      };
+    }
+
     async function bootstrap() {
       try {
         if (
@@ -440,7 +478,13 @@ function StripeTerminalBootstrap({
         }
 
         if (result.error) {
-          throw new Error(result.error.message);
+          // The Stripe wrapper replaces token-provider exceptions with a
+          // generic message. Prefer the sanitized HTTP/network error retained
+          // by our provider so the Readers screen shows the actionable cause.
+          throw (
+            getLastStripeTerminalConnectionTokenError() ??
+            new Error(result.error.message)
+          );
         }
 
         setInitializationError(null);
@@ -451,9 +495,7 @@ function StripeTerminalBootstrap({
         }
 
         setInitializationError(
-          error instanceof Error
-            ? error.message
-            : 'Unable to initialize Stripe Terminal',
+          getSafeStripeError(error, 'Unable to initialize Stripe Terminal'),
         );
         setStatus('error');
       }
@@ -474,17 +516,19 @@ function StripeTerminalBootstrap({
     return () => {
       isMounted = false;
     };
-  }, [initialize, initializationRetryKey, isInitialized]);
+  }, [initialize, initializationRetryKey, isInitialized, isStripeReady]);
 
   useEffect(() => {
-    if (!isInitialized || status !== 'ready') {
+    if (!isStripeReady || !isInitialized || status !== 'ready') {
       return;
     }
 
     refreshLocations().catch(() => {
       // provider exposes error state
     });
-  }, [isInitialized, status]);
+    // refreshLocations is intentionally triggered only by readiness transitions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isInitialized, isStripeReady, status]);
 
   useEffect(() => {
     if (!isInitialized || status !== 'ready') {
@@ -663,6 +707,11 @@ function StripeTerminalBootstrap({
   }
 
   async function refreshLocations() {
+    if (!isStripeReady) {
+      setLocationsError(STRIPE_SETUP_REQUIRED_MESSAGE);
+      setLocationsStatus('error');
+      return;
+    }
     setLocationsStatus('loading');
     setLocationsError(null);
 
@@ -673,9 +722,7 @@ function StripeTerminalBootstrap({
     } catch (error) {
       setLocationsStatus('error');
       setLocationsError(
-        error instanceof Error
-          ? error.message
-          : 'Unable to load Stripe Terminal locations',
+        getSafeStripeError(error, 'Unable to load Stripe Terminal locations'),
       );
     }
   }
@@ -702,13 +749,18 @@ function StripeTerminalBootstrap({
         error instanceof Error
           ? error
           : new Error('Unable to create Stripe Terminal location');
-      setLocationsError(locationError.message);
+      setLocationsError(getSafeStripeError(locationError));
       setLocationsStatus('error');
       throw locationError;
     }
   }
 
   async function discoverReaders() {
+    if (!isStripeReady) {
+      setDiscoveryError(STRIPE_SETUP_REQUIRED_MESSAGE);
+      setDiscoveryStatus('error');
+      return;
+    }
     if (!isInitialized || status !== 'ready') {
       setDiscoveryError('Stripe Terminal is not initialized yet.');
       setDiscoveryStatus('error');
@@ -769,7 +821,7 @@ function StripeTerminalBootstrap({
       ]);
 
       if (result.error) {
-        setDiscoveryError(result.error.message);
+        setDiscoveryError(getSafeStripeError(result.error));
         setDiscoveryStatus('error');
         setReaderConnectionMessage(null);
         return;
@@ -790,9 +842,7 @@ function StripeTerminalBootstrap({
       }
     } catch (error) {
       setDiscoveryError(
-        error instanceof Error
-          ? error.message
-          : 'Unable to discover Stripe readers',
+        getSafeStripeError(error, 'Unable to discover Stripe readers'),
       );
       setDiscoveryStatus('error');
       setReaderConnectionMessage(null);
@@ -806,6 +856,11 @@ function StripeTerminalBootstrap({
   }
 
   async function connectReader(readerId: string, locationIdOverride?: string) {
+    if (!isStripeReady) {
+      setConnectionError(STRIPE_SETUP_REQUIRED_MESSAGE);
+      setConnectionStatus('notConnected');
+      return;
+    }
     if (!isInitialized || status !== 'ready') {
       setConnectionError('Stripe Terminal is not initialized yet.');
       return;
@@ -844,6 +899,8 @@ function StripeTerminalBootstrap({
         ? 'Connecting to smart reader... keep the app open while Stripe syncs the S700.'
         : 'Connecting to reader... keep the app open while Stripe finishes Bluetooth pairing.',
     );
+    connectionAttemptRef.current += 1;
+    const connectionAttempt = connectionAttemptRef.current;
 
     let noticeTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
@@ -872,8 +929,13 @@ function StripeTerminalBootstrap({
               autoReconnectOnUnexpectedDisconnect: true,
             });
 
+      if (connectionAttemptRef.current !== connectionAttempt) {
+        await sdkDisconnectReader().catch(() => undefined);
+        return;
+      }
+
       if (result.error) {
-        setConnectionError(result.error.message);
+        setConnectionError(getSafeStripeError(result.error));
         setConnectionStatus('notConnected');
         return;
       }
@@ -889,10 +951,11 @@ function StripeTerminalBootstrap({
       );
       await persistPreferredReader(result.reader);
     } catch (error) {
+      if (connectionAttemptRef.current !== connectionAttempt) {
+        return;
+      }
       setConnectionError(
-        error instanceof Error
-          ? error.message
-          : 'Unable to connect to the reader',
+        getSafeStripeError(error, 'Unable to connect to the reader'),
       );
       setConnectionStatus('notConnected');
       setReaderConnectionMessage(null);
@@ -908,6 +971,7 @@ function StripeTerminalBootstrap({
   }
 
   async function disconnectReader() {
+    connectionAttemptRef.current += 1;
     setConnectionError(null);
     setDiscoveryError(null);
     setReaderConnectionMessage(null);
@@ -919,7 +983,7 @@ function StripeTerminalBootstrap({
 
     const result = await sdkDisconnectReader();
     if (result?.error) {
-      setConnectionError(result.error.message);
+      setConnectionError(getSafeStripeError(result.error));
       return;
     }
 
@@ -959,6 +1023,8 @@ function StripeTerminalBootstrap({
         ? 'Connecting Tap to Pay test reader on this phone...'
         : 'Connecting Tap to Pay on this phone...',
     );
+    connectionAttemptRef.current += 1;
+    const connectionAttempt = connectionAttemptRef.current;
 
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
@@ -986,6 +1052,11 @@ function StripeTerminalBootstrap({
         }),
       ]);
 
+      if (connectionAttemptRef.current !== connectionAttempt) {
+        await sdkDisconnectReader().catch(() => undefined);
+        return;
+      }
+
       if (result.error || !result.reader) {
         throw new Error(
           result.error?.message || 'Tap to Pay connection failed.',
@@ -1002,13 +1073,14 @@ function StripeTerminalBootstrap({
       );
       await persistPreferredReader(result.reader);
     } catch (error) {
+      if (connectionAttemptRef.current !== connectionAttempt) {
+        return;
+      }
       setDiscoveryStatus('error');
       setConnectionStatus('notConnected');
       setReaderConnectionMessage(null);
       setConnectionError(
-        error instanceof Error
-          ? error.message
-          : 'Tap to Pay connection failed.',
+        getSafeStripeError(error, 'Tap to Pay connection failed.'),
       );
       setConnectedReader(null);
       setBatteryLevel(null);
@@ -1138,7 +1210,7 @@ function StripeTerminalBootstrap({
     <StripeTerminalContext.Provider
       value={{
         status,
-        isReady: isInitialized && status === 'ready',
+        isReady: isStripeReady && isInitialized && status === 'ready',
         isReaderConnected:
           connectionStatus === 'connected' && connectedReader !== null,
         initializationError,

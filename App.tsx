@@ -9,6 +9,7 @@ import { StaffLockScreen } from './src/screens/StaffLockScreen';
 import { AppStripeTerminalProvider } from './src/terminal/StripeTerminalProvider';
 import { useAppTheme } from './src/theme';
 import { BrandLogo } from './src/components/BrandLogo';
+import { ConnectionUnavailableOverlay } from './src/components/ConnectionUnavailableOverlay';
 
 function AppRoot() {
   const { isStaffAuthenticated } = usePOS();
@@ -30,10 +31,20 @@ function AppRoot() {
 
 function AppConnectionGate() {
   const { isHydrated } = usePOS();
-  const { connection, isChecking } = useDeviceConnection();
+  const {
+    connection,
+    error,
+    hasStoredCredential,
+    isChecking,
+    refresh,
+  } = useDeviceConnection();
   const theme = useAppTheme();
 
-  if (!isHydrated || isChecking) {
+  if (
+    !isHydrated ||
+    hasStoredCredential === null ||
+    (isChecking && hasStoredCredential && !connection && !error)
+  ) {
     return (
       <View
         style={[styles.splash, { backgroundColor: theme.colors.background }]}>
@@ -44,12 +55,20 @@ function AppConnectionGate() {
     );
   }
 
-  if (!connection) return <DeviceActivationScreen />;
+  if (!hasStoredCredential) return <DeviceActivationScreen />;
 
   return (
-    <AppStripeTerminalProvider>
-      <AppRoot />
-    </AppStripeTerminalProvider>
+    <>
+      <AppStripeTerminalProvider>
+        <AppRoot key={error ? 'connection-unavailable' : 'connected'} />
+      </AppStripeTerminalProvider>
+      <ConnectionUnavailableOverlay
+        visible={error !== null}
+        isRetrying={isChecking}
+        message={error ?? 'This register cannot reach OneRegister.'}
+        onRetry={() => refresh().catch(() => undefined)}
+      />
+    </>
   );
 }
 

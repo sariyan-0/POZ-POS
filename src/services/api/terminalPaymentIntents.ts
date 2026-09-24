@@ -4,6 +4,10 @@ import {
   BackendNotConfiguredError,
 } from '../../config/backend';
 import { apiClient } from './ApiClient';
+import {
+  getSafeStripeError,
+  STRIPE_SETUP_REQUIRED_MESSAGE,
+} from '../../utils/userFacingError';
 
 export type BackendTerminalPaymentIntent = {
   id: string;
@@ -267,6 +271,48 @@ function describeTapToPayRuntimeError(
   return null;
 }
 
+function describeCardDecline(message: string): TerminalPaymentDebugSummary | null {
+  const normalized = message.toLowerCase().replace(/[_-]/g, ' ');
+
+  if (normalized.includes('insufficient funds')) {
+    return {
+      title: 'Card declined',
+      message: 'The card has insufficient funds. Ask the customer to use another payment method.',
+      debugLines: ['Issuer response: insufficient funds'],
+    };
+  }
+
+  if (normalized.includes('expired card')) {
+    return {
+      title: 'Card expired',
+      message: 'This card has expired. Ask the customer to use another card.',
+      debugLines: ['Issuer response: expired card'],
+    };
+  }
+
+  if (normalized.includes('incorrect pin') || normalized.includes('invalid pin')) {
+    return {
+      title: 'PIN not accepted',
+      message: 'The PIN was not accepted. Let the customer try again or use another card.',
+      debugLines: ['Issuer response: PIN failed'],
+    };
+  }
+
+  if (
+    normalized.includes('card declined') ||
+    normalized.includes('do not honor') ||
+    normalized.includes('generic decline')
+  ) {
+    return {
+      title: 'Card declined',
+      message: 'The card issuer declined this payment. Ask the customer to use another card or payment method.',
+      debugLines: ['Issuer response: declined'],
+    };
+  }
+
+  return null;
+}
+
 export function describeTerminalPaymentError(error: unknown): TerminalPaymentDebugSummary {
   const debugLines: string[] = [];
 
@@ -287,14 +333,34 @@ export function describeTerminalPaymentError(error: unknown): TerminalPaymentDeb
   }
 
   if (error instanceof Error) {
-    const tapToPaySummary = describeTapToPayRuntimeError(error.message);
+    const safeErrorMessage = getSafeStripeError(error);
+    if (safeErrorMessage === STRIPE_SETUP_REQUIRED_MESSAGE) {
+      return {
+        title: 'Stripe Setup Required',
+        message: STRIPE_SETUP_REQUIRED_MESSAGE,
+        guidanceLines: [
+          'Open the OneRegister Dashboard.',
+          'Go to Payments and finish or reconnect Stripe.',
+          'Return to this register and refresh the Stripe status.',
+        ],
+        debugLines: ['Stripe configuration is unavailable.'],
+      };
+    }
+
+    const tapToPaySummary = describeTapToPayRuntimeError(safeErrorMessage);
     if (tapToPaySummary) {
       return tapToPaySummary;
     }
 
+    const declineSummary = describeCardDecline(safeErrorMessage);
+    if (declineSummary) return declineSummary;
+
     const maybeStatus = 'status' in error ? error.status : undefined;
     const maybePayload = 'payload' in error ? error.payload : undefined;
-    const payloadMessage = readErrorPayloadMessage(maybePayload);
+    const rawPayloadMessage = readErrorPayloadMessage(maybePayload);
+    const payloadMessage = rawPayloadMessage
+      ? getSafeStripeError(rawPayloadMessage)
+      : null;
 
     if (typeof maybeStatus === 'number') {
       debugLines.push(`HTTP status: ${maybeStatus}`);
@@ -304,20 +370,12 @@ export function describeTerminalPaymentError(error: unknown): TerminalPaymentDeb
       debugLines.push(`Backend message: ${payloadMessage}`);
     }
 
-    if (maybePayload !== undefined) {
-      try {
-        debugLines.push(`Backend payload: ${JSON.stringify(maybePayload)}`);
-      } catch {
-        debugLines.push('Backend payload: [unserializable]');
-      }
-    }
-
     return {
       title:
         typeof maybeStatus === 'number' && maybeStatus >= 500
           ? 'Backend Payment Request Failed'
           : 'Payment Failed',
-      message: payloadMessage || error.message || 'Payment could not be completed.',
+      message: payloadMessage || safeErrorMessage,
       debugLines,
     };
   }

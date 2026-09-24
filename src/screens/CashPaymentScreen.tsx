@@ -11,11 +11,13 @@ import {
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons/static';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePOS } from '../hooks/usePOS';
+import type { CurrencyCode } from '../models/pos';
 import { useRootNavigation } from '../navigation/AppNavigator';
 import { recordTransaction } from '../services/api/transactions';
 import { useAppTheme } from '../theme';
 import { formatCurrency } from '../utils/format';
 import { createId } from '../utils/id';
+import { feedback } from '../services/feedback';
 
 const KEYS = [
   '1',
@@ -32,6 +34,14 @@ const KEYS = [
   '00',
 ];
 
+type CompletedCashPayment = {
+  reference: string;
+  totalInCents: number;
+  receivedInCents: number;
+  changeInCents: number;
+  currency: CurrencyCode;
+};
+
 export function CashPaymentScreen() {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
@@ -46,9 +56,8 @@ export function CashPaymentScreen() {
   const [digits, setDigits] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [completedReference, setCompletedReference] = useState<string | null>(
-    null,
-  );
+  const [completedPayment, setCompletedPayment] =
+    useState<CompletedCashPayment | null>(null);
   const entrance = useRef(new Animated.Value(0)).current;
   const currency = state.settings.business.currency;
   const receivedInCents = Number.parseInt(digits || '0', 10);
@@ -79,9 +88,14 @@ export function CashPaymentScreen() {
       mass: 0.85,
       useNativeDriver: true,
     }).start();
-  }, [completedReference, entrance]);
+  }, [completedPayment, entrance]);
+
+  useEffect(() => {
+    if (completedPayment) feedback.paymentSuccess();
+  }, [completedPayment]);
 
   function enterKey(key: string) {
+    feedback.selection();
     setError(null);
     if (key === 'backspace') {
       setDigits(current => current.slice(0, -1));
@@ -114,7 +128,15 @@ export function CashPaymentScreen() {
         );
       }
 
-      setCompletedReference(transaction.referenceCode ?? transaction.id);
+      setCompletedPayment({
+        reference: transaction.referenceCode ?? transaction.id,
+        totalInCents: transaction.total,
+        receivedInCents:
+          transaction.cashDetails?.receivedInCents ?? receivedInCents,
+        changeInCents:
+          transaction.cashDetails?.changeGivenInCents ?? changeInCents,
+        currency: transaction.currency,
+      });
       recordTransaction(transaction)
         .then(order => {
           updateTransactionSync(transaction.id, {
@@ -136,6 +158,7 @@ export function CashPaymentScreen() {
           });
         });
     } catch (paymentError) {
+      feedback.warning();
       setError(
         paymentError instanceof Error
           ? paymentError.message
@@ -146,7 +169,7 @@ export function CashPaymentScreen() {
     }
   }
 
-  if (completedReference) {
+  if (completedPayment) {
     return (
       <View
         style={[
@@ -193,7 +216,10 @@ export function CashPaymentScreen() {
             Return this change
           </Text>
           <Text style={[styles.changeAmount, { color: theme.colors.text }]}>
-            {formatCurrency(changeInCents, currency)}
+            {formatCurrency(
+              completedPayment.changeInCents,
+              completedPayment.currency,
+            )}
           </Text>
           <View
             style={[
@@ -203,11 +229,17 @@ export function CashPaymentScreen() {
           >
             <SummaryRow
               label="Sale total"
-              value={formatCurrency(total, currency)}
+              value={formatCurrency(
+                completedPayment.totalInCents,
+                completedPayment.currency,
+              )}
             />
             <SummaryRow
               label="Cash received"
-              value={formatCurrency(receivedInCents, currency)}
+              value={formatCurrency(
+                completedPayment.receivedInCents,
+                completedPayment.currency,
+              )}
             />
             <View
               style={[
@@ -217,7 +249,10 @@ export function CashPaymentScreen() {
             />
             <SummaryRow
               label="Change due"
-              value={formatCurrency(changeInCents, currency)}
+              value={formatCurrency(
+                completedPayment.changeInCents,
+                completedPayment.currency,
+              )}
               emphasized
             />
           </View>
@@ -225,7 +260,7 @@ export function CashPaymentScreen() {
             numberOfLines={1}
             style={[styles.reference, { color: theme.colors.textMuted }]}
           >
-            Reference {completedReference}
+            Reference {completedPayment.reference}
           </Text>
         </Animated.View>
         <PrimaryAction label="Done" onPress={() => navigation.popToTop()} />
@@ -365,7 +400,10 @@ export function CashPaymentScreen() {
             {quickAmounts.map(amount => (
               <Pressable
                 key={amount}
-                onPress={() => setDigits(String(amount))}
+                onPress={() => {
+                  feedback.selection();
+                  setDigits(String(amount));
+                }}
                 style={({ pressed }) => [
                   styles.quickAmount,
                   {

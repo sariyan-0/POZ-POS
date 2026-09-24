@@ -3,6 +3,7 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons/static';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../theme';
+import { feedback } from '../services/feedback';
 
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'backspace'] as const;
 
@@ -29,6 +30,7 @@ export function PinPad({
 
   function pressKey(key: typeof KEYS[number]) {
     if (!key) return;
+    feedback.selection();
     if (key === 'backspace') {
       onChange(value.slice(0, -1));
       return;
@@ -94,7 +96,10 @@ export function PinPad({
       {onSubmit ? (
         <Pressable
           disabled={value.length !== 4}
-          onPress={() => onSubmit(value)}
+          onPress={() => {
+            feedback.light();
+            onSubmit(value);
+          }}
           style={({ pressed }) => [
             styles.submit,
             {
