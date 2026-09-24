@@ -34,6 +34,7 @@ import { initialPOSState } from '../services/mockData';
 import { loadPOSState, savePOSState } from '../storage/persistence';
 import { createId, createTransactionReference } from '../utils/id';
 import { createPinCredentials, verifyPin } from '../utils/pin';
+import { calculateCartTotals } from '../utils/tax';
 import { fetchCatalog } from '../services/api/catalog';
 import { fetchStaff } from '../services/api/staff';
 import { fetchCustomers } from '../services/api/customers';
@@ -88,6 +89,7 @@ type POSContextValue = {
   removeCartItem: (itemId: string) => void;
   clearCart: () => void;
   upsertProduct: (product: Product) => void;
+  deleteProduct: (productId: string) => void;
   upsertModifierSet: (modifierSet: ModifierSet) => void;
   deactivateProduct: (productId: string) => void;
   adjustInventory: (productId: string, delta: number) => void;
@@ -182,6 +184,7 @@ type POSAction =
   | { type: 'removeCartItem'; payload: { itemId: string } }
   | { type: 'clearCart' }
   | { type: 'upsertProduct'; payload: Product }
+  | { type: 'deleteProduct'; payload: { productId: string } }
   | { type: 'upsertModifierSet'; payload: ModifierSet }
   | { type: 'upsertDiscount'; payload: Discount }
   | { type: 'deactivateProduct'; payload: { productId: string } }
@@ -208,7 +211,15 @@ type POSAction =
     }
   | { type: 'upsertStaffProfile'; payload: StaffMember }
   | { type: 'deactivateStaffProfile'; payload: { staffId: string } }
-  | { type: 'reconcileCatalog'; payload: { products: Product[] } }
+  | {
+      type: 'reconcileCatalog';
+      payload: {
+        products: Product[];
+        taxDefinitions: TaxDefinition[];
+        modifierSets: ModifierSet[];
+        defaultTaxRate: number;
+      };
+    }
   | { type: 'reconcileStaff'; payload: { staff: StaffMember[] } }
   | { type: 'reconcileCustomers'; payload: { customers: Customer[] } }
   | {
@@ -551,76 +562,6 @@ function roundCurrency(value: number): number {
   return Math.round(value);
 }
 
-function calculateCartTotals(state: POSState) {
-  const subtotal = state.cart.reduce(
-    (sum, item) => sum + item.unitPriceInCents * item.quantity,
-    0,
-  );
-  const enabledTaxes = state.settings.business.taxDefinitions.filter(
-    tax => tax.enabled,
-  );
-  const defaultTaxRate =
-    enabledTaxes.reduce((sum, tax) => sum + tax.rate, 0) ||
-    state.settings.business.defaultTaxRate;
-  const fallbackTaxes: TaxLine[] = defaultTaxRate
-    ? [
-        {
-          taxId: 'tax-default',
-          name: 'Tax',
-          rate: defaultTaxRate,
-          amount: 0,
-        },
-      ]
-    : [];
-  const taxLinesById = new Map<string, TaxLine>();
-
-  function getApplicableTaxes(item: CartItem) {
-    if (item.type === 'product' && item.productId) {
-      const product = state.products.find(entry => entry.id === item.productId);
-      if (product?.taxIds?.length) {
-        return enabledTaxes.filter(tax => product.taxIds?.includes(tax.id));
-      }
-    }
-
-    return enabledTaxes.length ? enabledTaxes : fallbackTaxes;
-  }
-
-  state.cart.forEach(item => {
-    if (!item.taxable) {
-      return;
-    }
-
-    const itemAmount = item.unitPriceInCents * item.quantity;
-    getApplicableTaxes(item).forEach(taxDef => {
-      const amount = roundCurrency(itemAmount * (taxDef.rate / 100));
-      if (!amount) {
-        return;
-      }
-
-      const taxId = 'taxId' in taxDef ? taxDef.taxId : taxDef.id;
-      const existing = taxLinesById.get(taxId);
-      if (existing) {
-        taxLinesById.set(taxId, {
-          ...existing,
-          amount: existing.amount + amount,
-        });
-        return;
-      }
-
-      taxLinesById.set(taxId, {
-        taxId,
-        name: taxDef.name,
-        rate: taxDef.rate,
-        amount,
-      });
-    });
-  });
-
-  const taxLines = Array.from(taxLinesById.values());
-  const tax = taxLines.reduce((sum, line) => sum + line.amount, 0);
-  return { subtotal, tax, taxLines, total: subtotal + tax };
-}
-
 function calculatePreDiscountTotals(state: POSState) {
   const baseItems = state.cart.filter(item => item.type !== 'discount');
   const subtotal = baseItems.reduce(
@@ -798,6 +739,16 @@ function posReducer(state: POSState, action: POSAction): POSState {
           : [...state.products, normalized],
       };
     }
+    case 'deleteProduct':
+      return {
+        ...state,
+        products: state.products.filter(
+          product => product.id !== action.payload.productId,
+        ),
+        cart: state.cart.filter(
+          item => item.productId !== action.payload.productId,
+        ),
+      };
     case 'upsertModifierSet': {
       const normalized = normalizeModifierSet(action.payload);
       const exists = state.modifierSets.some(
@@ -1083,6 +1034,17 @@ function posReducer(state: POSState, action: POSAction): POSState {
       return {
         ...state,
         products: [...serverProducts, ...retainedLocalProducts],
+        modifierSets: action.payload.modifierSets.map(normalizeModifierSet),
+        settings: {
+          ...state.settings,
+          business: {
+            ...state.settings.business,
+            taxDefinitions: action.payload.taxDefinitions.map(
+              normalizeTaxDefinition,
+            ),
+            defaultTaxRate: action.payload.defaultTaxRate,
+          },
+        },
         cart: state.cart.filter(
           item => !item.productId || availableIds.has(item.productId),
         ),
@@ -1176,7 +1138,12 @@ export function POSProvider({ children }: PropsWithChildren) {
       const result = await fetchCatalog();
       dispatch({
         type: 'reconcileCatalog',
-        payload: { products: result.products },
+        payload: {
+          products: result.products,
+          taxDefinitions: result.taxDefinitions,
+          modifierSets: result.modifierSets,
+          defaultTaxRate: result.defaultTaxRate,
+        },
       });
       lastCatalogSyncAtRef.current = result.syncedAt;
       setLastCatalogSyncAt(result.syncedAt);
@@ -1411,6 +1378,8 @@ export function POSProvider({ children }: PropsWithChildren) {
       clearCart: () => dispatch({ type: 'clearCart' }),
       upsertProduct: product =>
         dispatch({ type: 'upsertProduct', payload: product }),
+      deleteProduct: productId =>
+        dispatch({ type: 'deleteProduct', payload: { productId } }),
       upsertModifierSet: modifierSet =>
         dispatch({ type: 'upsertModifierSet', payload: modifierSet }),
       deactivateProduct: productId =>

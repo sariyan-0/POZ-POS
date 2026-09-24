@@ -27,10 +27,18 @@ import {
   RichToolbar,
   actions as richTextActions,
 } from 'react-native-pell-rich-editor';
-import { Product, ProductMassUnit, ProductOptionSet, ProductUnitType } from '../models/pos';
+import {
+  Product,
+  ProductMassUnit,
+  ProductOptionSet,
+  ProductUnitType,
+} from '../models/pos';
 import { SegmentedTabs } from '../components/POSUI';
 import { createEmptyProduct, usePOS } from '../hooks/usePOS';
-import { RootStackParamList, useRootNavigation } from '../navigation/AppNavigator';
+import {
+  RootStackParamList,
+  useRootNavigation,
+} from '../navigation/AppNavigator';
 import { useAppTheme } from '../theme';
 import { createId } from '../utils/id';
 import {
@@ -51,9 +59,10 @@ export function ProductEditorScreen() {
   const route = useRoute<ProductEditorRoute>();
   const theme = useAppTheme();
   const navigation = useRootNavigation();
-  const { state, upsertProduct } = usePOS();
+  const { state, upsertProduct, deleteProduct } = usePOS();
   const existingProduct = useMemo(
-    () => state.products.find(product => product.id === route.params?.productId),
+    () =>
+      state.products.find(product => product.id === route.params?.productId),
     [route.params?.productId, state.products],
   );
   const [product, setProduct] = useState<Product>(
@@ -67,15 +76,19 @@ export function ProductEditorScreen() {
   const [showTileEditor, setShowTileEditor] = useState(false);
   const [tileEditorTab, setTileEditorTab] = useState<TileEditorTab>('image');
   const [tileEditorMessage, setTileEditorMessage] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [tileDraft, setTileDraft] = useState<TileDraft>({
-    label: existingProduct?.tileLabel?.trim() || existingProduct?.name?.trim() || '',
+    label:
+      existingProduct?.tileLabel?.trim() || existingProduct?.name?.trim() || '',
     imageUri: existingProduct?.imageUri?.trim() || '',
     tileColor: existingProduct?.tileColor?.trim() || '',
   });
   const [optionSetName, setOptionSetName] = useState('');
   const [optionDisplayName, setOptionDisplayName] = useState('');
   const [optionValues, setOptionValues] = useState(['']);
-  const [editingOptionSetId, setEditingOptionSetId] = useState<string | null>(null);
+  const [editingOptionSetId, setEditingOptionSetId] = useState<string | null>(
+    null,
+  );
   const [priceText, setPriceText] = useState(
     product.priceInCents ? String(product.priceInCents / 100) : '',
   );
@@ -90,9 +103,7 @@ export function ProductEditorScreen() {
   const selectedUnitType = product.unitType ?? 'item';
   const selectedMassUnit = product.massUnit ?? 'kg';
   const unitLabel =
-    selectedUnitType === 'mass'
-      ? `Per mass (${selectedMassUnit})`
-      : 'Per item';
+    selectedUnitType === 'mass' ? `Per mass (${selectedMassUnit})` : 'Per item';
 
   function parsePriceInCents(text: string) {
     return Math.max(0, Math.round((Number.parseFloat(text || '0') || 0) * 100));
@@ -147,21 +158,34 @@ export function ProductEditorScreen() {
     navigation.goBack();
   }
 
+  function removeProduct() {
+    if (!existingProduct) return;
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
+    }
+    deleteProduct(existingProduct.id);
+    navigation.goBack();
+  }
+
   const selectedTaxNames = state.settings.business.taxDefinitions
     .filter(tax => product.taxIds?.includes(tax.id))
     .map(tax => tax.name);
   const selectedModifierNames = state.modifierSets
     .filter(modifierSet => product.modifierSetIds?.includes(modifierSet.id))
     .map(modifierSet => modifierSet.name);
-  const tilePreviewColor = product.tileColor?.trim() || theme.colors.surfaceMuted;
+  const tilePreviewColor =
+    product.tileColor?.trim() || theme.colors.surfaceMuted;
   const tilePreviewLabel = getProductTileLabel(product);
   const tilePreviewTextColor = getReadableTileTextColor(
     tilePreviewColor,
     theme.colors.text,
     theme.colors.surface,
   );
-  const tileDraftPreviewColor = tileDraft.tileColor?.trim() || theme.colors.surfaceMuted;
-  const tileDraftPreviewLabel = tileDraft.label.trim() || product.name.trim() || 'New Item';
+  const tileDraftPreviewColor =
+    tileDraft.tileColor?.trim() || theme.colors.surfaceMuted;
+  const tileDraftPreviewLabel =
+    tileDraft.label.trim() || product.name.trim() || 'New Item';
   const tileDraftTextColor = getReadableTileTextColor(
     tileDraftPreviewColor,
     theme.colors.text,
@@ -207,7 +231,9 @@ export function ProductEditorScreen() {
       setOptionSetName(optionSet.name);
       setOptionDisplayName(optionSet.displayName);
       setOptionValues(
-        optionSet.values.length ? [...optionSet.values.map(value => value.name), ''] : [''],
+        optionSet.values.length
+          ? [...optionSet.values.map(value => value.name), '']
+          : [''],
       );
     } else {
       setEditingOptionSetId(null);
@@ -229,7 +255,11 @@ export function ProductEditorScreen() {
         next.push('');
       }
 
-      while (next.length > 1 && !next[next.length - 1].trim() && !next[next.length - 2].trim()) {
+      while (
+        next.length > 1 &&
+        !next[next.length - 1].trim() &&
+        !next[next.length - 2].trim()
+      ) {
         next.pop();
       }
 
@@ -274,7 +304,8 @@ export function ProductEditorScreen() {
       PermissionsAndroid.PERMISSIONS.CAMERA,
       {
         title: 'Allow camera access',
-        message: 'OneRegister needs the camera so you can take a product tile photo.',
+        message:
+          'OneRegister needs the camera so you can take a product tile photo.',
         buttonPositive: 'Allow',
         buttonNegative: 'Not now',
       },
@@ -325,7 +356,9 @@ export function ProductEditorScreen() {
       }
 
       if (response.errorCode) {
-        setTileEditorMessage(response.errorMessage || 'Could not open the photo library.');
+        setTileEditorMessage(
+          response.errorMessage || 'Could not open the photo library.',
+        );
         return;
       }
 
@@ -362,7 +395,9 @@ export function ProductEditorScreen() {
       }
 
       if (response.errorCode) {
-        setTileEditorMessage(response.errorMessage || 'Could not open the camera.');
+        setTileEditorMessage(
+          response.errorMessage || 'Could not open the camera.',
+        );
         return;
       }
 
@@ -385,12 +420,23 @@ export function ProductEditorScreen() {
         ref={scrollViewRef}
         style={{ flex: 1, backgroundColor: theme.colors.surface }}
         contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled">
-        <View style={[styles.topBar, { borderBottomColor: theme.colors.border }]}>
+        keyboardShouldPersistTaps="handled"
+      >
+        <View
+          style={[styles.topBar, { borderBottomColor: theme.colors.border }]}
+        >
           <Pressable
             onPress={() => navigation.goBack()}
-            style={[styles.circleButton, { backgroundColor: readyButtonBackground }]}>
-            <MaterialDesignIcons color={readyButtonText} name="close" size={28} />
+            style={[
+              styles.circleButton,
+              { backgroundColor: readyButtonBackground },
+            ]}
+          >
+            <MaterialDesignIcons
+              color={readyButtonText}
+              name="close"
+              size={28}
+            />
           </Pressable>
           <Text style={[styles.title, { color: theme.colors.text }]}>
             {isEditing ? 'Edit item' : 'Create item'}
@@ -406,14 +452,18 @@ export function ProductEditorScreen() {
                   : readyButtonBackground,
                 opacity: saveDisabled ? 0.55 : 1,
               },
-            ]}>
+            ]}
+          >
             <Text
               style={[
                 styles.saveLabel,
                 {
-                  color: saveDisabled ? theme.colors.textMuted : readyButtonText,
+                  color: saveDisabled
+                    ? theme.colors.textMuted
+                    : readyButtonText,
                 },
-              ]}>
+              ]}
+            >
               Save
             </Text>
           </Pressable>
@@ -424,76 +474,94 @@ export function ProductEditorScreen() {
             style={[
               styles.previewCard,
               {
-                backgroundColor: product.imageUri ? theme.colors.surfaceMuted : tilePreviewColor,
+                backgroundColor: product.imageUri
+                  ? theme.colors.surfaceMuted
+                  : tilePreviewColor,
                 borderColor: theme.colors.border,
               },
-            ]}>
+            ]}
+          >
             {product.imageUri ? (
-              <Image source={{ uri: product.imageUri }} style={styles.previewCardImage} />
+              <Image
+                source={{ uri: product.imageUri }}
+                style={styles.previewCardImage}
+              />
             ) : null}
             <View
               style={[
                 styles.previewCardFooter,
                 {
-                  backgroundColor: product.imageUri ? 'rgba(0,0,0,0.36)' : 'transparent',
+                  backgroundColor: product.imageUri
+                    ? 'rgba(0,0,0,0.36)'
+                    : 'transparent',
                 },
-              ]}>
+              ]}
+            >
               <Text
                 style={[
                   styles.previewTitle,
-                  { color: product.imageUri ? '#FFFFFF' : tilePreviewTextColor },
-                ]}>
+                  {
+                    color: product.imageUri ? '#FFFFFF' : tilePreviewTextColor,
+                  },
+                ]}
+              >
                 {tilePreviewLabel}
               </Text>
             </View>
           </View>
           <Pressable
             onPress={openTileEditor}
-            style={[styles.softPill, { backgroundColor: theme.colors.surfaceStrong }]}>
+            style={[
+              styles.softPill,
+              { backgroundColor: theme.colors.surfaceStrong },
+            ]}
+          >
             <Text style={[styles.softPillLabel, { color: theme.colors.text }]}>
               Edit POS tile
             </Text>
           </Pressable>
         </View>
 
-      <FieldCard>
-        <View style={styles.nameRow}>
-          <TextInput
-            value={product.name}
-            onChangeText={text => setProduct(current => ({ ...current, name: text }))}
-            placeholder="Name"
-            placeholderTextColor={theme.colors.textMuted}
-            style={[styles.nameInput, { color: theme.colors.text }]}
-          />
-        </View>
-      </FieldCard>
+        <FieldCard>
+          <View style={styles.nameRow}>
+            <TextInput
+              value={product.name}
+              onChangeText={text =>
+                setProduct(current => ({ ...current, name: text }))
+              }
+              placeholder="Name"
+              placeholderTextColor={theme.colors.textMuted}
+              style={[styles.nameInput, { color: theme.colors.text }]}
+            />
+          </View>
+        </FieldCard>
 
-      <FieldCard>
-        <View style={styles.descriptionEditor}>
-          <RichEditor
-            ref={descriptionEditorRef}
-            initialHeight={178}
-            initialContentHTML={toRichTextHtml(product.description)}
-            placeholder="Description"
-            onCursorPosition={offsetY => {
-              scrollViewRef.current?.scrollTo({
-                y: Math.max(0, offsetY - 180),
-                animated: true,
-              });
-            }}
-            editorStyle={{
-              backgroundColor: theme.colors.surface,
-              color: theme.colors.text,
-              caretColor: theme.colors.text,
-              placeholderColor: theme.colors.textMuted,
-              contentCSSText: `
+        <FieldCard>
+          <View style={styles.descriptionEditor}>
+            <RichEditor
+              ref={descriptionEditorRef}
+              initialHeight={178}
+              initialContentHTML={toRichTextHtml(product.description)}
+              placeholder="Description"
+              onCursorPosition={offsetY => {
+                scrollViewRef.current?.scrollTo({
+                  y: Math.max(0, offsetY - 180),
+                  animated: true,
+                });
+              }}
+              editorStyle={{
+                backgroundColor: theme.colors.surface,
+                color: theme.colors.text,
+                caretColor: theme.colors.text,
+                placeholderColor: theme.colors.textMuted,
+                contentCSSText: `
                 font-size: 18px;
                 line-height: 26px;
                 padding: 18px 18px 18px 18px;
                 color: ${theme.colors.text};
                 background-color: ${theme.colors.surface};
               `,
-              cssText: `
+                cssText: `
                 body {
                   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
                   color: ${theme.colors.text};
@@ -510,623 +578,1051 @@ export function ProductEditorScreen() {
                   color: ${theme.colors.text};
                 }
               `,
+              }}
+              onChange={html =>
+                setProduct(current => ({ ...current, description: html }))
+              }
+              style={styles.richEditor}
+            />
+          </View>
+          <RichToolbar
+            editor={descriptionEditorRef}
+            actions={[
+              richTextActions.setBold,
+              richTextActions.setItalic,
+              richTextActions.setUnderline,
+              richTextActions.setStrikethrough,
+              richTextActions.insertBulletsList,
+              richTextActions.insertOrderedList,
+              richTextActions.insertLink,
+            ]}
+            iconTint={theme.colors.textMuted}
+            selectedIconTint={theme.colors.text}
+            style={[
+              styles.richToolbar,
+              {
+                borderTopColor: theme.colors.border,
+                backgroundColor: theme.colors.surface,
+              },
+            ]}
+            flatContainerStyle={styles.richToolbarContent}
+            selectedButtonStyle={{
+              backgroundColor: theme.colors.surfaceStrong,
             }}
-            onChange={html => setProduct(current => ({ ...current, description: html }))}
-            style={styles.richEditor}
           />
-        </View>
-        <RichToolbar
-          editor={descriptionEditorRef}
-          actions={[
-            richTextActions.setBold,
-            richTextActions.setItalic,
-            richTextActions.setUnderline,
-            richTextActions.setStrikethrough,
-            richTextActions.insertBulletsList,
-            richTextActions.insertOrderedList,
-            richTextActions.insertLink,
-          ]}
-          iconTint={theme.colors.textMuted}
-          selectedIconTint={theme.colors.text}
-          style={[
-            styles.richToolbar,
-            {
-              borderTopColor: theme.colors.border,
-              backgroundColor: theme.colors.surface,
-            },
-          ]}
-          flatContainerStyle={styles.richToolbarContent}
-          selectedButtonStyle={{ backgroundColor: theme.colors.surfaceStrong }}
-        />
-      </FieldCard>
+        </FieldCard>
 
-      <SectionDivider themeBorder={theme.colors.border} />
+        <SectionDivider themeBorder={theme.colors.border} />
 
-      <SectionTitle label="Taxes" />
-      <Pressable style={styles.infoRow} onPress={() => setShowTaxSelector(true)}>
-        <View style={styles.infoCopy}>
-          <Text style={[styles.infoTitle, { color: theme.colors.text }]}>Taxes</Text>
-          <Text style={[styles.infoBody, { color: theme.colors.textMuted }]}>
-            {!product.taxable
-              ? 'No taxes available'
-              : selectedTaxNames.length
+        <SectionTitle label="Taxes" />
+        <Pressable
+          style={styles.infoRow}
+          onPress={() => setShowTaxSelector(true)}
+        >
+          <View style={styles.infoCopy}>
+            <Text style={[styles.infoTitle, { color: theme.colors.text }]}>
+              Taxes
+            </Text>
+            <Text style={[styles.infoBody, { color: theme.colors.textMuted }]}>
+              {!product.taxable
+                ? 'No taxes available'
+                : selectedTaxNames.length
                 ? selectedTaxNames.join(', ')
                 : 'Uses store tax settings'}
+            </Text>
+          </View>
+          <MaterialDesignIcons
+            color={theme.colors.textMuted}
+            name="chevron-right"
+            size={28}
+          />
+        </Pressable>
+
+        {/* Categorization is temporarily hidden until item category workflows are ready. */}
+
+        <SectionTitle label="Options" />
+        <Text style={[styles.paragraph, { color: theme.colors.text }]}>
+          Add a custom set of options to create variations for an item. For
+          example, add a size option set to create variations for small, medium,
+          and large. <Text style={styles.linkLike}>Learn more</Text>
+        </Text>
+        <Pressable
+          onPress={() => setShowOptionSelector(true)}
+          style={[
+            styles.fullWidthPill,
+            { backgroundColor: theme.colors.surfaceStrong },
+          ]}
+        >
+          <Text
+            style={[styles.fullWidthPillLabel, { color: theme.colors.text }]}
+          >
+            {product.optionSets?.length ? 'Manage options' : 'Add options'}
+          </Text>
+        </Pressable>
+
+        <SectionTitle label="Price and inventory" />
+        <StackField
+          label="SKU"
+          value={product.sku}
+          onChangeText={text =>
+            setProduct(current => ({ ...current, sku: text }))
+          }
+          placeholder="SKU"
+        />
+        <Pressable
+          onPress={() => setShowUnitSelector(true)}
+          style={[styles.stackCard, { borderColor: theme.colors.border }]}
+        >
+          <View>
+            <Text style={[styles.stackLabel, { color: theme.colors.text }]}>
+              Unit
+            </Text>
+            <Text style={[styles.stackValue, { color: theme.colors.text }]}>
+              {unitLabel}
+            </Text>
+          </View>
+          <Text style={[styles.linkLike, { color: theme.colors.text }]}>
+            Change
+          </Text>
+        </Pressable>
+        <StackField
+          label={
+            selectedUnitType === 'mass'
+              ? `Unit price per ${selectedMassUnit}`
+              : 'Unit price'
+          }
+          value={priceText}
+          onChangeText={updatePrice}
+          placeholder="0.00"
+          keyboardType="numeric"
+        />
+        <StackField
+          label="Unit cost"
+          value=""
+          onChangeText={() => {}}
+          placeholder="Unit cost"
+          keyboardType="numeric"
+        />
+
+        <View style={styles.rowBetween}>
+          <Text
+            style={[styles.sectionInlineTitle, { color: theme.colors.text }]}
+          >
+            Stock on hand
+          </Text>
+          <Text style={[styles.linkLike, { color: theme.colors.text }]}>
+            Manage stock
           </Text>
         </View>
-        <MaterialDesignIcons color={theme.colors.textMuted} name="chevron-right" size={28} />
-      </Pressable>
 
-      {/* Categorization is temporarily hidden until item category workflows are ready. */}
-
-      <SectionTitle label="Options" />
-      <Text style={[styles.paragraph, { color: theme.colors.text }]}>
-        Add a custom set of options to create variations for an item. For example, add a size option
-        set to create variations for small, medium, and large. <Text style={styles.linkLike}>Learn more</Text>
-      </Text>
-      <Pressable
-        onPress={() => setShowOptionSelector(true)}
-        style={[styles.fullWidthPill, { backgroundColor: theme.colors.surfaceStrong }]}>
-        <Text style={[styles.fullWidthPillLabel, { color: theme.colors.text }]}>
-          {product.optionSets?.length ? 'Manage options' : 'Add options'}
-        </Text>
-      </Pressable>
-
-      <SectionTitle label="Price and inventory" />
-      <StackField
-        label="SKU"
-        value={product.sku}
-        onChangeText={text => setProduct(current => ({ ...current, sku: text }))}
-        placeholder="SKU"
-      />
-      <Pressable
-        onPress={() => setShowUnitSelector(true)}
-        style={[styles.stackCard, { borderColor: theme.colors.border }]}>
-        <View>
-          <Text style={[styles.stackLabel, { color: theme.colors.text }]}>Unit</Text>
-          <Text style={[styles.stackValue, { color: theme.colors.text }]}>{unitLabel}</Text>
+        <View style={styles.toggleSection}>
+          <ToggleRow
+            label="Inventory tracking"
+            value={product.trackInventory}
+            onValueChange={value =>
+              setProduct(current => ({ ...current, trackInventory: value }))
+            }
+          />
+          <ToggleRow
+            label="Favorite"
+            value={product.isFavorite}
+            onValueChange={value =>
+              setProduct(current => ({ ...current, isFavorite: value }))
+            }
+          />
+          <ToggleRow
+            label="Active"
+            value={product.active}
+            onValueChange={value =>
+              setProduct(current => ({ ...current, active: value }))
+            }
+          />
         </View>
-        <Text style={[styles.linkLike, { color: theme.colors.text }]}>Change</Text>
-      </Pressable>
-      <StackField
-        label={selectedUnitType === 'mass' ? `Unit price per ${selectedMassUnit}` : 'Unit price'}
-        value={priceText}
-        onChangeText={updatePrice}
-        placeholder="0.00"
-        keyboardType="numeric"
-      />
-      <StackField
-        label="Unit cost"
-        value=""
-        onChangeText={() => {}}
-        placeholder="Unit cost"
-        keyboardType="numeric"
-      />
 
-      <View style={styles.rowBetween}>
-        <Text style={[styles.sectionInlineTitle, { color: theme.colors.text }]}>Stock on hand</Text>
-        <Text style={[styles.linkLike, { color: theme.colors.text }]}>Manage stock</Text>
-      </View>
+        <Pressable
+          style={[
+            styles.fullWidthPill,
+            { backgroundColor: theme.colors.surfaceStrong },
+          ]}
+        >
+          <Text
+            style={[styles.fullWidthPillLabel, { color: theme.colors.text }]}
+          >
+            Create variation
+          </Text>
+        </Pressable>
 
-      <View style={styles.toggleSection}>
-        <ToggleRow
-          label="Inventory tracking"
-          value={product.trackInventory}
-          onValueChange={value => setProduct(current => ({ ...current, trackInventory: value }))}
-        />
-        <ToggleRow
-          label="Favorite"
-          value={product.isFavorite}
-          onValueChange={value => setProduct(current => ({ ...current, isFavorite: value }))}
-        />
-        <ToggleRow
-          label="Active"
-          value={product.active}
-          onValueChange={value => setProduct(current => ({ ...current, active: value }))}
-        />
-      </View>
+        <SectionDivider themeBorder={theme.colors.border} />
 
-      <Pressable style={[styles.fullWidthPill, { backgroundColor: theme.colors.surfaceStrong }]}>
-        <Text style={[styles.fullWidthPillLabel, { color: theme.colors.text }]}>
-          Create variation
+        <SectionTitle label="Modifiers" />
+        <Text style={[styles.paragraph, { color: theme.colors.text }]}>
+          Allow customizations such as toppings or special requests like extra
+          cheese.
         </Text>
-      </Pressable>
+        <Pressable
+          onPress={() => setShowModifierSelector(true)}
+          style={[
+            styles.fullWidthPill,
+            { backgroundColor: theme.colors.surfaceStrong },
+          ]}
+        >
+          <Text
+            style={[styles.fullWidthPillLabel, { color: theme.colors.text }]}
+          >
+            {selectedModifierNames.length
+              ? 'Manage modifiers'
+              : 'Add modifiers'}
+          </Text>
+        </Pressable>
+        {selectedModifierNames.length ? (
+          <Text
+            style={[styles.selectionSummary, { color: theme.colors.textMuted }]}
+          >
+            {selectedModifierNames.join(', ')}
+          </Text>
+        ) : null}
 
-      <SectionDivider themeBorder={theme.colors.border} />
-
-      <SectionTitle label="Modifiers" />
-      <Text style={[styles.paragraph, { color: theme.colors.text }]}>
-        Allow customizations such as toppings or special requests like extra cheese.
-      </Text>
-      <Pressable
-        onPress={() => setShowModifierSelector(true)}
-        style={[styles.fullWidthPill, { backgroundColor: theme.colors.surfaceStrong }]}>
-        <Text style={[styles.fullWidthPillLabel, { color: theme.colors.text }]}>
-          {selectedModifierNames.length ? 'Manage modifiers' : 'Add modifiers'}
-        </Text>
-      </Pressable>
-      {selectedModifierNames.length ? (
-        <Text style={[styles.selectionSummary, { color: theme.colors.textMuted }]}>
-          {selectedModifierNames.join(', ')}
-        </Text>
-      ) : null}
-
-      <Modal
-        visible={showTileEditor}
-        animationType="slide"
-        onRequestClose={closeTileEditor}>
-        <SafeAreaView style={[styles.tileEditorScreen, { backgroundColor: theme.colors.surface }]}>
-          <View style={[styles.topBar, { borderBottomColor: theme.colors.border }]}>
+        {isEditing ? (
+          <View
+            style={[
+              styles.dangerZone,
+              {
+                backgroundColor: theme.colors.surfaceMuted,
+                borderColor: confirmDelete
+                  ? theme.colors.danger
+                  : theme.colors.border,
+              },
+            ]}
+          >
+            <View style={styles.dangerCopy}>
+              <Text style={[styles.dangerTitle, { color: theme.colors.text }]}>
+                Delete item
+              </Text>
+              <Text
+                style={[styles.dangerBody, { color: theme.colors.textMuted }]}
+              >
+                Removes this item and clears it from the current sale.
+              </Text>
+            </View>
             <Pressable
-              onPress={closeTileEditor}
-              style={[styles.circleButton, { backgroundColor: theme.colors.surfaceMuted }]}>
-              <MaterialDesignIcons color={theme.colors.text} name="close" size={28} />
-            </Pressable>
-            <Text style={[styles.title, { color: theme.colors.text }]}>Edit POS tile</Text>
-            <Pressable
-              onPress={saveTileEditor}
-              style={[styles.tileSaveButton, { backgroundColor: theme.colors.accent }]}>
-              <Text style={[styles.tileSaveLabel, { color: theme.colors.accentText }]}>Save</Text>
+              accessibilityRole="button"
+              onPress={removeProduct}
+              style={[
+                styles.deleteButton,
+                {
+                  backgroundColor: confirmDelete
+                    ? theme.colors.danger
+                    : theme.colors.surface,
+                  borderColor: theme.colors.danger,
+                },
+              ]}
+            >
+              <MaterialDesignIcons
+                color={confirmDelete ? '#FFFFFF' : theme.colors.danger}
+                name="trash-can-outline"
+                size={20}
+              />
+              <Text
+                style={[
+                  styles.deleteButtonLabel,
+                  { color: confirmDelete ? '#FFFFFF' : theme.colors.danger },
+                ]}
+              >
+                {confirmDelete ? 'Confirm delete' : 'Delete'}
+              </Text>
             </Pressable>
           </View>
+        ) : null}
 
-          <ScrollView
-            style={{ flex: 1 }}
-            contentContainerStyle={styles.tileEditorContent}>
-            <View style={styles.tilePreviewWrap}>
-              <View
+        <Modal
+          visible={showTileEditor}
+          animationType="slide"
+          onRequestClose={closeTileEditor}
+        >
+          <SafeAreaView
+            style={[
+              styles.tileEditorScreen,
+              { backgroundColor: theme.colors.surface },
+            ]}
+          >
+            <View
+              style={[
+                styles.topBar,
+                { borderBottomColor: theme.colors.border },
+              ]}
+            >
+              <Pressable
+                onPress={closeTileEditor}
                 style={[
-                  styles.tilePreviewCard,
-                  {
-                    backgroundColor: tileDraft.imageUri
-                      ? theme.colors.surfaceMuted
-                      : tileDraftPreviewColor,
-                    borderColor: theme.colors.border,
-                  },
-                ]}>
-                {tileDraft.imageUri ? (
-                  <Image source={{ uri: tileDraft.imageUri }} style={styles.tilePreviewImage} />
-                ) : null}
+                  styles.circleButton,
+                  { backgroundColor: theme.colors.surfaceMuted },
+                ]}
+              >
+                <MaterialDesignIcons
+                  color={theme.colors.text}
+                  name="close"
+                  size={28}
+                />
+              </Pressable>
+              <Text style={[styles.title, { color: theme.colors.text }]}>
+                Edit POS tile
+              </Text>
+              <Pressable
+                onPress={saveTileEditor}
+                style={[
+                  styles.tileSaveButton,
+                  { backgroundColor: theme.colors.accent },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.tileSaveLabel,
+                    { color: theme.colors.accentText },
+                  ]}
+                >
+                  Save
+                </Text>
+              </Pressable>
+            </View>
+
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={styles.tileEditorContent}
+            >
+              <View style={styles.tilePreviewWrap}>
                 <View
                   style={[
-                    styles.tilePreviewFooter,
+                    styles.tilePreviewCard,
                     {
                       backgroundColor: tileDraft.imageUri
-                        ? 'rgba(0,0,0,0.36)'
-                        : 'transparent',
+                        ? theme.colors.surfaceMuted
+                        : tileDraftPreviewColor,
+                      borderColor: theme.colors.border,
                     },
-                  ]}>
-                  <Text
+                  ]}
+                >
+                  {tileDraft.imageUri ? (
+                    <Image
+                      source={{ uri: tileDraft.imageUri }}
+                      style={styles.tilePreviewImage}
+                    />
+                  ) : null}
+                  <View
                     style={[
-                      styles.tilePreviewTitle,
-                      { color: tileDraft.imageUri ? '#FFFFFF' : tileDraftTextColor },
+                      styles.tilePreviewFooter,
+                      {
+                        backgroundColor: tileDraft.imageUri
+                          ? 'rgba(0,0,0,0.36)'
+                          : 'transparent',
+                      },
                     ]}
-                    numberOfLines={2}>
-                    {tileDraftPreviewLabel}
-                  </Text>
+                  >
+                    <Text
+                      style={[
+                        styles.tilePreviewTitle,
+                        {
+                          color: tileDraft.imageUri
+                            ? '#FFFFFF'
+                            : tileDraftTextColor,
+                        },
+                      ]}
+                      numberOfLines={2}
+                    >
+                      {tileDraftPreviewLabel}
+                    </Text>
+                  </View>
                 </View>
               </View>
-            </View>
 
-            <FieldCard>
-              <TextInput
-                value={tileDraft.label}
-                onChangeText={text => setTileDraft(current => ({ ...current, label: text }))}
-                placeholder="Tile label"
-                placeholderTextColor={theme.colors.textMuted}
-                style={[styles.tileLabelInput, { color: theme.colors.text }]}
-              />
-            </FieldCard>
-
-            <View style={styles.tileSegmentWrap}>
-              <SegmentedTabs
-                options={[
-                  { key: 'image', label: 'Image' },
-                  { key: 'color', label: 'Color' },
-                ]}
-                value={tileEditorTab}
-                onChange={nextValue => setTileEditorTab(nextValue as TileEditorTab)}
-              />
-            </View>
-
-            {tileEditorTab === 'image' ? (
-              <View style={styles.tileActionList}>
-                <TileActionRow
-                  icon="view-grid-outline"
-                  label="Choose from library"
-                  onPress={chooseTileImageFromLibrary}
+              <FieldCard>
+                <TextInput
+                  value={tileDraft.label}
+                  onChangeText={text =>
+                    setTileDraft(current => ({ ...current, label: text }))
+                  }
+                  placeholder="Tile label"
+                  placeholderTextColor={theme.colors.textMuted}
+                  style={[styles.tileLabelInput, { color: theme.colors.text }]}
                 />
-                <TileActionRow
-                  icon="camera-outline"
-                  label="Take a photo"
-                  onPress={takeTilePhoto}
-                />
-                <TileActionRow
-                  icon="trash-can-outline"
-                  label="Remove image"
-                  onPress={removeTileImage}
+              </FieldCard>
+
+              <View style={styles.tileSegmentWrap}>
+                <SegmentedTabs
+                  options={[
+                    { key: 'image', label: 'Image' },
+                    { key: 'color', label: 'Color' },
+                  ]}
+                  value={tileEditorTab}
+                  onChange={nextValue =>
+                    setTileEditorTab(nextValue as TileEditorTab)
+                  }
                 />
               </View>
-            ) : (
-              <View style={styles.colorGrid}>
-                {PRODUCT_TILE_COLORS.map(color => {
-                  const selected = tileDraft.tileColor === color && !tileDraft.imageUri;
+
+              {tileEditorTab === 'image' ? (
+                <View style={styles.tileActionList}>
+                  <TileActionRow
+                    icon="view-grid-outline"
+                    label="Choose from library"
+                    onPress={chooseTileImageFromLibrary}
+                  />
+                  <TileActionRow
+                    icon="camera-outline"
+                    label="Take a photo"
+                    onPress={takeTilePhoto}
+                  />
+                  <TileActionRow
+                    icon="trash-can-outline"
+                    label="Remove image"
+                    onPress={removeTileImage}
+                  />
+                </View>
+              ) : (
+                <View style={styles.colorGrid}>
+                  {PRODUCT_TILE_COLORS.map(color => {
+                    const selected =
+                      tileDraft.tileColor === color && !tileDraft.imageUri;
+                    return (
+                      <Pressable
+                        key={color}
+                        onPress={() =>
+                          setTileDraft(current => ({
+                            ...current,
+                            tileColor: color,
+                            imageUri: '',
+                          }))
+                        }
+                        style={[
+                          styles.colorSwatchOuter,
+                          {
+                            borderColor: selected
+                              ? theme.colors.text
+                              : 'transparent',
+                          },
+                        ]}
+                      >
+                        <View
+                          style={[
+                            styles.colorSwatch,
+                            { backgroundColor: color },
+                          ]}
+                        />
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              )}
+              <Text
+                style={[
+                  styles.tileEditorMessage,
+                  {
+                    color: tileEditorMessage
+                      ? theme.colors.textMuted
+                      : 'transparent',
+                  },
+                ]}
+              >
+                {tileEditorMessage || ' '}
+              </Text>
+            </ScrollView>
+          </SafeAreaView>
+        </Modal>
+
+        <Modal
+          visible={showModifierSelector}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowModifierSelector(false)}
+        >
+          <View
+            style={[
+              styles.modalBackdrop,
+              { backgroundColor: theme.colors.overlay },
+            ]}
+          >
+            <View
+              style={[
+                styles.sheetCard,
+                { backgroundColor: theme.colors.surface },
+              ]}
+            >
+              <View style={styles.sheetHeader}>
+                <Pressable onPress={() => setShowModifierSelector(false)}>
+                  <MaterialDesignIcons
+                    color={theme.colors.text}
+                    name="close"
+                    size={28}
+                  />
+                </Pressable>
+                <Text style={[styles.sheetTitle, { color: theme.colors.text }]}>
+                  Add modifiers
+                </Text>
+                <View style={{ width: 28 }} />
+              </View>
+              {state.modifierSets.length ? (
+                state.modifierSets.map(modifierSet => {
+                  const selected = product.modifierSetIds?.includes(
+                    modifierSet.id,
+                  );
                   return (
                     <Pressable
-                      key={color}
+                      key={modifierSet.id}
                       onPress={() =>
-                        setTileDraft(current => ({
+                        setProduct(current => ({
                           ...current,
-                          tileColor: color,
-                          imageUri: '',
+                          modifierSetIds: selected
+                            ? (current.modifierSetIds ?? []).filter(
+                                id => id !== modifierSet.id,
+                              )
+                            : [
+                                ...(current.modifierSetIds ?? []),
+                                modifierSet.id,
+                              ],
                         }))
                       }
                       style={[
-                        styles.colorSwatchOuter,
-                        { borderColor: selected ? theme.colors.text : 'transparent' },
-                      ]}>
-                      <View style={[styles.colorSwatch, { backgroundColor: color }]} />
+                        styles.sheetRow,
+                        { borderBottomColor: theme.colors.border },
+                      ]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text
+                          style={[
+                            styles.infoTitle,
+                            { color: theme.colors.text },
+                          ]}
+                        >
+                          {modifierSet.name}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.infoBody,
+                            { color: theme.colors.textMuted },
+                          ]}
+                        >
+                          {modifierSet.modifiers
+                            .map(modifier => modifier.name)
+                            .join(', ')}
+                        </Text>
+                      </View>
+                      <MaterialDesignIcons
+                        color={
+                          selected
+                            ? theme.colors.accent
+                            : theme.colors.textMuted
+                        }
+                        name={
+                          selected
+                            ? 'check-circle'
+                            : 'checkbox-blank-circle-outline'
+                        }
+                        size={24}
+                      />
                     </Pressable>
                   );
-                })}
-              </View>
-            )}
-            <Text
-              style={[
-                styles.tileEditorMessage,
-                {
-                  color: tileEditorMessage ? theme.colors.textMuted : 'transparent',
-                },
-              ]}>
-              {tileEditorMessage || ' '}
-            </Text>
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
+                })
+              ) : (
+                <View style={styles.emptyOptionState}>
+                  <Text
+                    style={[
+                      styles.emptyOptionTitle,
+                      { color: theme.colors.text },
+                    ]}
+                  >
+                    You don't have any modifiers
+                  </Text>
+                  <Text
+                    style={[
+                      styles.emptyOptionBody,
+                      { color: theme.colors.textMuted },
+                    ]}
+                  >
+                    Create new modifiers in Items {'>'} Modifiers.
+                  </Text>
+                  <Pressable
+                    onPress={() => {
+                      setShowModifierSelector(false);
+                      navigation.navigate('Modifiers');
+                    }}
+                    style={[
+                      styles.createOptionButton,
+                      { backgroundColor: theme.colors.surfaceStrong },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.fullWidthPillLabel,
+                        { color: theme.colors.text },
+                      ]}
+                    >
+                      Open modifiers
+                    </Text>
+                  </Pressable>
+                </View>
+              )}
+            </View>
+          </View>
+        </Modal>
 
         <Modal
-        visible={showModifierSelector}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowModifierSelector(false)}>
-        <View style={[styles.modalBackdrop, { backgroundColor: theme.colors.overlay }]}>
-          <View style={[styles.sheetCard, { backgroundColor: theme.colors.surface }]}>
-            <View style={styles.sheetHeader}>
-              <Pressable onPress={() => setShowModifierSelector(false)}>
-                <MaterialDesignIcons color={theme.colors.text} name="close" size={28} />
-              </Pressable>
-              <Text style={[styles.sheetTitle, { color: theme.colors.text }]}>
-                Add modifiers
-              </Text>
-              <View style={{ width: 28 }} />
-            </View>
-            {state.modifierSets.length ? (
-              state.modifierSets.map(modifierSet => {
-                const selected = product.modifierSetIds?.includes(modifierSet.id);
+          visible={showTaxSelector}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowTaxSelector(false)}
+        >
+          <View
+            style={[
+              styles.modalBackdrop,
+              { backgroundColor: theme.colors.overlay },
+            ]}
+          >
+            <View
+              style={[
+                styles.sheetCard,
+                { backgroundColor: theme.colors.surface },
+              ]}
+            >
+              <View style={styles.sheetHeader}>
+                <Pressable onPress={() => setShowTaxSelector(false)}>
+                  <MaterialDesignIcons
+                    color={theme.colors.text}
+                    name="close"
+                    size={28}
+                  />
+                </Pressable>
+                <Text style={[styles.sheetTitle, { color: theme.colors.text }]}>
+                  Select taxes
+                </Text>
+                <View style={{ width: 28 }} />
+              </View>
+              {state.settings.business.taxDefinitions.map(tax => {
+                const selected = product.taxIds?.includes(tax.id);
                 return (
                   <Pressable
-                    key={modifierSet.id}
+                    key={tax.id}
                     onPress={() =>
                       setProduct(current => ({
                         ...current,
-                        modifierSetIds: selected
-                          ? (current.modifierSetIds ?? []).filter(id => id !== modifierSet.id)
-                          : [...(current.modifierSetIds ?? []), modifierSet.id],
+                        taxIds: selected
+                          ? (current.taxIds ?? []).filter(id => id !== tax.id)
+                          : [...(current.taxIds ?? []), tax.id],
                       }))
                     }
-                    style={[styles.sheetRow, { borderBottomColor: theme.colors.border }]}>
+                    style={[
+                      styles.sheetRow,
+                      { borderBottomColor: theme.colors.border },
+                    ]}
+                  >
                     <View style={{ flex: 1 }}>
-                      <Text style={[styles.infoTitle, { color: theme.colors.text }]}>
-                        {modifierSet.name}
+                      <Text
+                        style={[styles.infoTitle, { color: theme.colors.text }]}
+                      >
+                        {tax.name}
                       </Text>
-                      <Text style={[styles.infoBody, { color: theme.colors.textMuted }]}>
-                        {modifierSet.modifiers.map(modifier => modifier.name).join(', ')}
+                      <Text
+                        style={[
+                          styles.infoBody,
+                          { color: theme.colors.textMuted },
+                        ]}
+                      >
+                        {tax.rate}%
                       </Text>
                     </View>
                     <MaterialDesignIcons
-                      color={selected ? theme.colors.accent : theme.colors.textMuted}
-                      name={selected ? 'check-circle' : 'checkbox-blank-circle-outline'}
-                      size={24}
-                    />
-                  </Pressable>
-                );
-              })
-            ) : (
-              <View style={styles.emptyOptionState}>
-                <Text style={[styles.emptyOptionTitle, { color: theme.colors.text }]}>
-                  You don't have any modifiers
-                </Text>
-                <Text style={[styles.emptyOptionBody, { color: theme.colors.textMuted }]}>
-                  Create new modifiers in Items {'>'} Modifiers.
-                </Text>
-                <Pressable
-                  onPress={() => {
-                    setShowModifierSelector(false);
-                    navigation.navigate('Modifiers');
-                  }}
-                  style={[styles.createOptionButton, { backgroundColor: theme.colors.surfaceStrong }]}>
-                  <Text style={[styles.fullWidthPillLabel, { color: theme.colors.text }]}>
-                    Open modifiers
-                  </Text>
-                </Pressable>
-              </View>
-            )}
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
-        visible={showTaxSelector}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowTaxSelector(false)}>
-        <View style={[styles.modalBackdrop, { backgroundColor: theme.colors.overlay }]}>
-          <View style={[styles.sheetCard, { backgroundColor: theme.colors.surface }]}>
-            <View style={styles.sheetHeader}>
-              <Pressable onPress={() => setShowTaxSelector(false)}>
-                <MaterialDesignIcons color={theme.colors.text} name="close" size={28} />
-              </Pressable>
-              <Text style={[styles.sheetTitle, { color: theme.colors.text }]}>Select taxes</Text>
-              <View style={{ width: 28 }} />
-            </View>
-            {state.settings.business.taxDefinitions.map(tax => {
-              const selected = product.taxIds?.includes(tax.id);
-              return (
-                <Pressable
-                  key={tax.id}
-                  onPress={() =>
-                    setProduct(current => ({
-                      ...current,
-                      taxIds: selected
-                        ? (current.taxIds ?? []).filter(id => id !== tax.id)
-                        : [...(current.taxIds ?? []), tax.id],
-                    }))
-                  }
-                  style={[
-                    styles.sheetRow,
-                    { borderBottomColor: theme.colors.border },
-                  ]}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.infoTitle, { color: theme.colors.text }]}>{tax.name}</Text>
-                    <Text style={[styles.infoBody, { color: theme.colors.textMuted }]}>
-                      {tax.rate}%
-                    </Text>
-                  </View>
-                  <MaterialDesignIcons
-                    color={selected ? theme.colors.accent : theme.colors.textMuted}
-                    name={selected ? 'check-circle' : 'checkbox-blank-circle-outline'}
-                    size={24}
-                  />
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
-        visible={showUnitSelector}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowUnitSelector(false)}>
-        <View style={[styles.modalBackdrop, { backgroundColor: theme.colors.overlay }]}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowUnitSelector(false)} />
-          <View style={[styles.sheetCard, { backgroundColor: theme.colors.surface }]}>
-            <View style={styles.sheetHeader}>
-              <Pressable onPress={() => setShowUnitSelector(false)}>
-                <MaterialDesignIcons color={theme.colors.text} name="close" size={28} />
-              </Pressable>
-              <Text style={[styles.sheetTitle, { color: theme.colors.text }]}>Unit</Text>
-              <Pressable onPress={() => setShowUnitSelector(false)}>
-                <Text style={[styles.sheetAction, { color: theme.colors.text }]}>Done</Text>
-              </Pressable>
-            </View>
-
-            <Text style={[styles.optionLabel, { color: theme.colors.text }]}>Sell by</Text>
-            <View style={styles.unitChoiceGroup}>
-              {[
-                { key: 'item' as ProductUnitType, label: 'Per item' },
-                { key: 'mass' as ProductUnitType, label: 'Per mass' },
-              ].map(option => {
-                const selected = selectedUnitType === option.key;
-                return (
-                  <Pressable
-                    key={option.key}
-                    onPress={() => updateUnitType(option.key)}
-                    style={[
-                      styles.unitChoiceRow,
-                      {
-                        borderColor: selected ? theme.colors.accent : theme.colors.border,
-                        backgroundColor: selected
-                          ? theme.colors.surfaceStrong
-                          : theme.colors.surface,
-                      },
-                    ]}>
-                    <Text style={[styles.infoTitle, { color: theme.colors.text }]}>
-                      {option.label}
-                    </Text>
-                    <MaterialDesignIcons
-                      color={selected ? theme.colors.accent : theme.colors.textMuted}
-                      name={selected ? 'check-circle' : 'checkbox-blank-circle-outline'}
+                      color={
+                        selected ? theme.colors.accent : theme.colors.textMuted
+                      }
+                      name={
+                        selected
+                          ? 'check-circle'
+                          : 'checkbox-blank-circle-outline'
+                      }
                       size={24}
                     />
                   </Pressable>
                 );
               })}
             </View>
-
-            {selectedUnitType === 'mass' ? (
-              <>
-                <Text style={[styles.optionLabel, { color: theme.colors.text }]}>Mass unit</Text>
-                <View style={styles.unitSegment}>
-                  {[
-                    { key: 'kg' as ProductMassUnit, label: 'kg' },
-                    { key: 'lb' as ProductMassUnit, label: 'pounds' },
-                  ].map(option => {
-                    const selected = selectedMassUnit === option.key;
-                    return (
-                      <Pressable
-                        key={option.key}
-                        onPress={() => updateMassUnit(option.key)}
-                        style={[
-                          styles.unitSegmentButton,
-                          {
-                            backgroundColor: selected
-                              ? readyButtonBackground
-                              : theme.colors.surfaceMuted,
-                          },
-                        ]}>
-                        <Text
-                          style={[
-                            styles.unitSegmentLabel,
-                            { color: selected ? readyButtonText : theme.colors.text },
-                          ]}>
-                          {option.label}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </>
-            ) : null}
-
-            <StackField
-              label={selectedUnitType === 'mass' ? `Unit price per ${selectedMassUnit}` : 'Unit price'}
-              value={priceText}
-              onChangeText={updatePrice}
-              placeholder="0.00"
-              keyboardType="numeric"
-            />
           </View>
-        </View>
-      </Modal>
+        </Modal>
 
-      <Modal
-        visible={showOptionSelector}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowOptionSelector(false)}>
-        <View style={[styles.modalBackdrop, { backgroundColor: theme.colors.overlay }]}>
-          <View style={[styles.sheetCard, { backgroundColor: theme.colors.surface }]}>
-            <View style={styles.sheetHeader}>
-              <Pressable onPress={() => setShowOptionSelector(false)}>
-                <MaterialDesignIcons color={theme.colors.text} name="close" size={28} />
-              </Pressable>
-              <Text style={[styles.sheetTitle, { color: theme.colors.text }]}>
-                Select item options
-              </Text>
-              <Pressable onPress={() => setShowOptionSelector(false)}>
-                <Text style={[styles.sheetAction, { color: theme.colors.text }]}>Next</Text>
-              </Pressable>
-            </View>
-            {product.optionSets?.length ? (
-              product.optionSets.map(optionSet => (
-                <Pressable
-                  key={optionSet.id}
-                  onPress={() => openOptionEditor(optionSet)}
-                  style={[styles.sheetRow, { borderBottomColor: theme.colors.border }]}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.infoTitle, { color: theme.colors.text }]}>
-                      {optionSet.name}
-                    </Text>
-                    <Text style={[styles.infoBody, { color: theme.colors.textMuted }]}>
-                      {optionSet.values.map(value => value.name).join(', ')}
-                    </Text>
-                  </View>
+        <Modal
+          visible={showUnitSelector}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowUnitSelector(false)}
+        >
+          <View
+            style={[
+              styles.modalBackdrop,
+              { backgroundColor: theme.colors.overlay },
+            ]}
+          >
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={() => setShowUnitSelector(false)}
+            />
+            <View
+              style={[
+                styles.sheetCard,
+                { backgroundColor: theme.colors.surface },
+              ]}
+            >
+              <View style={styles.sheetHeader}>
+                <Pressable onPress={() => setShowUnitSelector(false)}>
                   <MaterialDesignIcons
-                    color={theme.colors.textMuted}
-                    name="chevron-right"
-                    size={24}
+                    color={theme.colors.text}
+                    name="close"
+                    size={28}
                   />
                 </Pressable>
-              ))
-            ) : (
-              <View style={styles.emptyOptionState}>
-                <MaterialDesignIcons
-                  color={theme.colors.textMuted}
-                  name="layers-outline"
-                  size={72}
-                />
-                <Text style={[styles.emptyOptionTitle, { color: theme.colors.text }]}>
-                  No options
+                <Text style={[styles.sheetTitle, { color: theme.colors.text }]}>
+                  Unit
                 </Text>
+                <Pressable onPress={() => setShowUnitSelector(false)}>
+                  <Text
+                    style={[styles.sheetAction, { color: theme.colors.text }]}
+                  >
+                    Done
+                  </Text>
+                </Pressable>
+              </View>
+
+              <Text style={[styles.optionLabel, { color: theme.colors.text }]}>
+                Sell by
+              </Text>
+              <View style={styles.unitChoiceGroup}>
+                {[
+                  { key: 'item' as ProductUnitType, label: 'Per item' },
+                  { key: 'mass' as ProductUnitType, label: 'Per mass' },
+                ].map(option => {
+                  const selected = selectedUnitType === option.key;
+                  return (
+                    <Pressable
+                      key={option.key}
+                      onPress={() => updateUnitType(option.key)}
+                      style={[
+                        styles.unitChoiceRow,
+                        {
+                          borderColor: selected
+                            ? theme.colors.accent
+                            : theme.colors.border,
+                          backgroundColor: selected
+                            ? theme.colors.surfaceStrong
+                            : theme.colors.surface,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[styles.infoTitle, { color: theme.colors.text }]}
+                      >
+                        {option.label}
+                      </Text>
+                      <MaterialDesignIcons
+                        color={
+                          selected
+                            ? theme.colors.accent
+                            : theme.colors.textMuted
+                        }
+                        name={
+                          selected
+                            ? 'check-circle'
+                            : 'checkbox-blank-circle-outline'
+                        }
+                        size={24}
+                      />
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              {selectedUnitType === 'mass' ? (
+                <>
+                  <Text
+                    style={[styles.optionLabel, { color: theme.colors.text }]}
+                  >
+                    Mass unit
+                  </Text>
+                  <View style={styles.unitSegment}>
+                    {[
+                      { key: 'kg' as ProductMassUnit, label: 'kg' },
+                      { key: 'lb' as ProductMassUnit, label: 'pounds' },
+                    ].map(option => {
+                      const selected = selectedMassUnit === option.key;
+                      return (
+                        <Pressable
+                          key={option.key}
+                          onPress={() => updateMassUnit(option.key)}
+                          style={[
+                            styles.unitSegmentButton,
+                            {
+                              backgroundColor: selected
+                                ? readyButtonBackground
+                                : theme.colors.surfaceMuted,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.unitSegmentLabel,
+                              {
+                                color: selected
+                                  ? readyButtonText
+                                  : theme.colors.text,
+                              },
+                            ]}
+                          >
+                            {option.label}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </>
+              ) : null}
+
+              <StackField
+                label={
+                  selectedUnitType === 'mass'
+                    ? `Unit price per ${selectedMassUnit}`
+                    : 'Unit price'
+                }
+                value={priceText}
+                onChangeText={updatePrice}
+                placeholder="0.00"
+                keyboardType="numeric"
+              />
+            </View>
+          </View>
+        </Modal>
+
+        <Modal
+          visible={showOptionSelector}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowOptionSelector(false)}
+        >
+          <View
+            style={[
+              styles.modalBackdrop,
+              { backgroundColor: theme.colors.overlay },
+            ]}
+          >
+            <View
+              style={[
+                styles.sheetCard,
+                { backgroundColor: theme.colors.surface },
+              ]}
+            >
+              <View style={styles.sheetHeader}>
+                <Pressable onPress={() => setShowOptionSelector(false)}>
+                  <MaterialDesignIcons
+                    color={theme.colors.text}
+                    name="close"
+                    size={28}
+                  />
+                </Pressable>
+                <Text style={[styles.sheetTitle, { color: theme.colors.text }]}>
+                  Select item options
+                </Text>
+                <Pressable onPress={() => setShowOptionSelector(false)}>
+                  <Text
+                    style={[styles.sheetAction, { color: theme.colors.text }]}
+                  >
+                    Next
+                  </Text>
+                </Pressable>
+              </View>
+              {product.optionSets?.length ? (
+                product.optionSets.map(optionSet => (
+                  <Pressable
+                    key={optionSet.id}
+                    onPress={() => openOptionEditor(optionSet)}
+                    style={[
+                      styles.sheetRow,
+                      { borderBottomColor: theme.colors.border },
+                    ]}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text
+                        style={[styles.infoTitle, { color: theme.colors.text }]}
+                      >
+                        {optionSet.name}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.infoBody,
+                          { color: theme.colors.textMuted },
+                        ]}
+                      >
+                        {optionSet.values.map(value => value.name).join(', ')}
+                      </Text>
+                    </View>
+                    <MaterialDesignIcons
+                      color={theme.colors.textMuted}
+                      name="chevron-right"
+                      size={24}
+                    />
+                  </Pressable>
+                ))
+              ) : (
+                <View style={styles.emptyOptionState}>
+                  <MaterialDesignIcons
+                    color={theme.colors.textMuted}
+                    name="layers-outline"
+                    size={72}
+                  />
+                  <Text
+                    style={[
+                      styles.emptyOptionTitle,
+                      { color: theme.colors.text },
+                    ]}
+                  >
+                    No options
+                  </Text>
+                  <Pressable
+                    onPress={() => openOptionEditor()}
+                    style={[
+                      styles.createOptionButton,
+                      { backgroundColor: theme.colors.surfaceStrong },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.fullWidthPillLabel,
+                        { color: theme.colors.text },
+                      ]}
+                    >
+                      Create option
+                    </Text>
+                  </Pressable>
+                  <Text
+                    style={[
+                      styles.emptyOptionBody,
+                      { color: theme.colors.textMuted },
+                    ]}
+                  >
+                    Create options for selectable values on your items at
+                    checkout. Learn More
+                  </Text>
+                </View>
+              )}
+              {product.optionSets?.length ? (
                 <Pressable
                   onPress={() => openOptionEditor()}
-                  style={[styles.createOptionButton, { backgroundColor: theme.colors.surfaceStrong }]}>
-                  <Text style={[styles.fullWidthPillLabel, { color: theme.colors.text }]}>
+                  style={[
+                    styles.createOptionButton,
+                    { backgroundColor: theme.colors.surfaceStrong },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.fullWidthPillLabel,
+                      { color: theme.colors.text },
+                    ]}
+                  >
                     Create option
                   </Text>
                 </Pressable>
-                <Text style={[styles.emptyOptionBody, { color: theme.colors.textMuted }]}>
-                  Create options for selectable values on your items at checkout. Learn More
-                </Text>
-              </View>
-            )}
-            {product.optionSets?.length ? (
-              <Pressable
-                onPress={() => openOptionEditor()}
-                style={[styles.createOptionButton, { backgroundColor: theme.colors.surfaceStrong }]}>
-                <Text style={[styles.fullWidthPillLabel, { color: theme.colors.text }]}>
-                  Create option
-                </Text>
-              </Pressable>
-            ) : null}
+              ) : null}
+            </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
 
-      <Modal
-        visible={showOptionCreator}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowOptionCreator(false)}>
-        <View style={[styles.modalBackdrop, { backgroundColor: theme.colors.overlay }]}>
-          <View style={[styles.sheetCard, { backgroundColor: theme.colors.surface }]}>
-            <View style={styles.sheetHeader}>
-              <Pressable onPress={() => setShowOptionCreator(false)}>
-                <MaterialDesignIcons color={theme.colors.text} name="close" size={28} />
-              </Pressable>
-              <Text style={[styles.sheetTitle, { color: theme.colors.text }]}>
-                {editingOptionSetId ? 'Edit option' : 'Create option'}
+        <Modal
+          visible={showOptionCreator}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowOptionCreator(false)}
+        >
+          <View
+            style={[
+              styles.modalBackdrop,
+              { backgroundColor: theme.colors.overlay },
+            ]}
+          >
+            <View
+              style={[
+                styles.sheetCard,
+                { backgroundColor: theme.colors.surface },
+              ]}
+            >
+              <View style={styles.sheetHeader}>
+                <Pressable onPress={() => setShowOptionCreator(false)}>
+                  <MaterialDesignIcons
+                    color={theme.colors.text}
+                    name="close"
+                    size={28}
+                  />
+                </Pressable>
+                <Text style={[styles.sheetTitle, { color: theme.colors.text }]}>
+                  {editingOptionSetId ? 'Edit option' : 'Create option'}
+                </Text>
+                <Pressable onPress={createOptionSet}>
+                  <Text
+                    style={[styles.sheetAction, { color: theme.colors.text }]}
+                  >
+                    Create
+                  </Text>
+                </Pressable>
+              </View>
+              <Text style={[styles.optionLabel, { color: theme.colors.text }]}>
+                Option set
               </Text>
-              <Pressable onPress={createOptionSet}>
-                <Text style={[styles.sheetAction, { color: theme.colors.text }]}>Create</Text>
-              </Pressable>
-            </View>
-            <Text style={[styles.optionLabel, { color: theme.colors.text }]}>Option set</Text>
-            <TextInput
-              value={optionSetName}
-              onChangeText={setOptionSetName}
-              placeholder="T-shirt color"
-              placeholderTextColor={theme.colors.textMuted}
-              style={[styles.optionInput, { color: theme.colors.text, borderColor: theme.colors.border }]}
-            />
-            <Text style={[styles.optionLabel, { color: theme.colors.text }]}>Display name</Text>
-            <TextInput
-              value={optionDisplayName}
-              onChangeText={setOptionDisplayName}
-              placeholder="Color"
-              placeholderTextColor={theme.colors.textMuted}
-              style={[styles.optionInput, { color: theme.colors.text, borderColor: theme.colors.border }]}
-            />
-            <Text style={[styles.optionLabel, { color: theme.colors.text }]}>Options</Text>
-            <View style={styles.optionInputList}>
-              {optionValues.map((value, index) => (
-                <TextInput
-                  key={`${editingOptionSetId ?? 'new'}-${index}`}
-                  value={value}
-                  onChangeText={text => updateOptionValue(index, text)}
-                  placeholder={index === 0 ? 'Add option' : 'Add another option'}
-                  placeholderTextColor={theme.colors.textMuted}
-                  style={[
-                    styles.optionInput,
-                    { color: theme.colors.text, borderColor: theme.colors.border },
-                  ]}
-                />
-              ))}
+              <TextInput
+                value={optionSetName}
+                onChangeText={setOptionSetName}
+                placeholder="T-shirt color"
+                placeholderTextColor={theme.colors.textMuted}
+                style={[
+                  styles.optionInput,
+                  {
+                    color: theme.colors.text,
+                    borderColor: theme.colors.border,
+                  },
+                ]}
+              />
+              <Text style={[styles.optionLabel, { color: theme.colors.text }]}>
+                Display name
+              </Text>
+              <TextInput
+                value={optionDisplayName}
+                onChangeText={setOptionDisplayName}
+                placeholder="Color"
+                placeholderTextColor={theme.colors.textMuted}
+                style={[
+                  styles.optionInput,
+                  {
+                    color: theme.colors.text,
+                    borderColor: theme.colors.border,
+                  },
+                ]}
+              />
+              <Text style={[styles.optionLabel, { color: theme.colors.text }]}>
+                Options
+              </Text>
+              <View style={styles.optionInputList}>
+                {optionValues.map((value, index) => (
+                  <TextInput
+                    key={`${editingOptionSetId ?? 'new'}-${index}`}
+                    value={value}
+                    onChangeText={text => updateOptionValue(index, text)}
+                    placeholder={
+                      index === 0 ? 'Add option' : 'Add another option'
+                    }
+                    placeholderTextColor={theme.colors.textMuted}
+                    style={[
+                      styles.optionInput,
+                      {
+                        color: theme.colors.text,
+                        borderColor: theme.colors.border,
+                      },
+                    ]}
+                  />
+                ))}
+              </View>
             </View>
           </View>
-        </View>
         </Modal>
       </ScrollView>
     </SafeAreaView>
@@ -1136,7 +1632,9 @@ export function ProductEditorScreen() {
 function FieldCard({ children }: { children: React.ReactNode }) {
   const theme = useAppTheme();
   return (
-    <View style={[styles.fieldCard, { borderColor: theme.colors.border }]}>{children}</View>
+    <View style={[styles.fieldCard, { borderColor: theme.colors.border }]}>
+      {children}
+    </View>
   );
 }
 
@@ -1157,7 +1655,9 @@ function StackField({
 
   return (
     <View style={[styles.stackCard, { borderColor: theme.colors.border }]}>
-      <Text style={[styles.stackLabel, { color: theme.colors.text }]}>{label}</Text>
+      <Text style={[styles.stackLabel, { color: theme.colors.text }]}>
+        {label}
+      </Text>
       <TextInput
         value={value}
         onChangeText={onChangeText}
@@ -1182,7 +1682,9 @@ function ToggleRow({
   const theme = useAppTheme();
   return (
     <View style={styles.toggleRow}>
-      <Text style={[styles.toggleLabel, { color: theme.colors.text }]}>{label}</Text>
+      <Text style={[styles.toggleLabel, { color: theme.colors.text }]}>
+        {label}
+      </Text>
       <Switch value={value} onValueChange={onValueChange} />
     </View>
   );
@@ -1190,11 +1692,17 @@ function ToggleRow({
 
 function SectionTitle({ label }: { label: string }) {
   const theme = useAppTheme();
-  return <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>{label}</Text>;
+  return (
+    <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
+      {label}
+    </Text>
+  );
 }
 
 function SectionDivider({ themeBorder }: { themeBorder: string }) {
-  return <View style={[styles.sectionDivider, { backgroundColor: themeBorder }]} />;
+  return (
+    <View style={[styles.sectionDivider, { backgroundColor: themeBorder }]} />
+  );
 }
 
 function TileActionRow({
@@ -1211,9 +1719,12 @@ function TileActionRow({
   return (
     <Pressable
       onPress={onPress}
-      style={[styles.tileActionRow, { borderBottomColor: theme.colors.border }]}>
+      style={[styles.tileActionRow, { borderBottomColor: theme.colors.border }]}
+    >
       <MaterialDesignIcons color={theme.colors.text} name={icon} size={28} />
-      <Text style={[styles.tileActionLabel, { color: theme.colors.text }]}>{label}</Text>
+      <Text style={[styles.tileActionLabel, { color: theme.colors.text }]}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -1432,6 +1943,44 @@ const styles = StyleSheet.create({
     marginBottom: 22,
     fontSize: 14,
     lineHeight: 20,
+  },
+  dangerZone: {
+    marginHorizontal: 18,
+    marginTop: 12,
+    marginBottom: 28,
+    padding: 18,
+    borderWidth: 1,
+    borderRadius: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16,
+  },
+  dangerCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  dangerTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  dangerBody: {
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  deleteButton: {
+    minHeight: 46,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderRadius: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+  },
+  deleteButtonLabel: {
+    fontSize: 13,
+    fontWeight: '800',
   },
   stackCard: {
     minHeight: 92,

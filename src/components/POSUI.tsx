@@ -17,6 +17,7 @@ import { Product } from '../models/pos';
 import { useAppStripeTerminal } from '../terminal/StripeTerminalProvider';
 import { useAppTheme } from '../theme';
 import { getProductTileInitials, getReadableTileTextColor } from '../utils/productTile';
+import { useDeviceConnection } from '../context/DeviceConnectionProvider';
 
 type IconName = React.ComponentProps<typeof MaterialDesignIcons>['name'];
 
@@ -116,9 +117,13 @@ export function CheckoutHeader() {
   const theme = useAppTheme();
   const navigation = useNavigation<any>();
   const terminal = useAppStripeTerminal();
+  const { connection } = useDeviceConnection();
+  const isStripeReady = connection?.business.stripeConnected === true;
 
   const readerTone =
-    terminal.isReaderConnected
+    !isStripeReady
+      ? theme.colors.warning
+      : terminal.isReaderConnected
       ? theme.colors.success
       : terminal.connectionStatus === 'connecting' ||
           terminal.connectionStatus === 'reconnecting' ||
@@ -128,7 +133,9 @@ export function CheckoutHeader() {
           ? theme.colors.danger
           : theme.colors.textMuted;
   const readerLabel =
-    terminal.isReaderConnected
+    !isStripeReady
+      ? 'Stripe not connected'
+      : terminal.isReaderConnected
       ? 'Reader connected'
       : terminal.connectionStatus === 'connecting' ||
           terminal.connectionStatus === 'reconnecting' ||
@@ -138,7 +145,9 @@ export function CheckoutHeader() {
           ? 'Reader error'
           : 'Reader not connected';
   const readerIconName: IconName =
-    terminal.connectionError || terminal.initializationError
+    !isStripeReady
+      ? 'credit-card-off-outline'
+      : terminal.connectionError || terminal.initializationError
       ? 'exclamation-thick'
       : terminal.isReaderConnected
         ? 'checkbox-blank-outline'
@@ -148,7 +157,9 @@ export function CheckoutHeader() {
           ? 'progress-wrench'
           : 'shape-outline';
   const readerIconBackground =
-    terminal.connectionError || terminal.initializationError
+    !isStripeReady
+      ? `${theme.colors.warning}22`
+      : terminal.connectionError || terminal.initializationError
       ? theme.colors.badge
       : terminal.isReaderConnected
         ? theme.colors.surface
