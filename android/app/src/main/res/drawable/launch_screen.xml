@@ -5,5 +5,5 @@
         android:width="104dp"
         android:height="104dp"
         android:gravity="center"
-        android:drawable="@drawable/oneregister_mark" />
+        android:drawable="@drawable/oneregister_logo" />
 </layer-list>
