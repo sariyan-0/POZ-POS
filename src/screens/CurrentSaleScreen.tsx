@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -457,7 +459,11 @@ function CustomerSheet({
 
   return (
     <Modal animationType="slide" transparent visible={visible} onRequestClose={onClose}>
-      <View style={[styles.customerModalBackdrop, { backgroundColor: theme.colors.overlay }]}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.customerKeyboardAvoider}
+      >
+      <View style={[styles.customerModalBackdrop, { backgroundColor: theme.colors.overlay }]}> 
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View
           style={[
@@ -507,7 +513,9 @@ function CustomerSheet({
           </View>
 
           <ScrollView
+            automaticallyAdjustKeyboardInsets
             style={styles.customerResults}
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}>
             {matchingCustomers.length ? (
@@ -676,6 +684,7 @@ function CustomerSheet({
           </ScrollView>
         </View>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -775,6 +784,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'flex-end',
   },
+  customerKeyboardAvoider: { flex: 1 },
   confirmCard: {
     width: '100%',
     maxWidth: 420,

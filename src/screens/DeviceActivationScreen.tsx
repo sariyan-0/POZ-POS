@@ -1,7 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  AccessibilityInfo,
   ActivityIndicator,
+  Animated,
+  Image,
+  Keyboard,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -9,48 +14,151 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  Vibration,
   View,
 } from 'react-native';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons/static';
 import { DataScanner } from 'react-native-data-scanner';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { DEFAULT_BACKEND_URL } from '../config/backend';
 import { useDeviceConnection } from '../context/DeviceConnectionProvider';
-import { useAppTheme } from '../theme';
 import { usePOS } from '../hooks/usePOS';
-import { BrandLogo } from '../components/BrandLogo';
+import {
+  formatActivationCode,
+  isCompleteActivationCode,
+  VerifiedDeviceActivation,
+  verifyDeviceActivation,
+} from '../services/api/deviceConnection';
+import { useAppTheme } from '../theme';
 
-export function DeviceActivationScreen() {
+type ActivationStage = 'pair' | 'name';
+
+export function DeviceActivationScreen({ onBack }: { onBack?: () => void }) {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
   const { connect, error: connectionError, refresh } = useDeviceConnection();
   const { syncCatalog, syncStaff, syncCustomers } = usePOS();
+  const transition = useRef(new Animated.Value(1)).current;
+  const scanSuccess = useRef(new Animated.Value(0)).current;
+  const scanSuccessAnimation = useRef<Animated.CompositeAnimation | null>(null);
+  const scrollViewRef = useRef<any>(null);
+  const [stage, setStage] = useState<ActivationStage>('pair');
   const [activation, setActivation] = useState('');
+  const [verified, setVerified] = useState<VerifiedDeviceActivation | null>(
+    null,
+  );
   const [registerName, setRegisterName] = useState('Front counter');
+  const [isVerifying, setIsVerifying] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isOpeningScanner, setIsOpeningScanner] = useState(false);
+  const [scannerVerified, setScannerVerified] = useState(false);
+  const [reduceMotion, setReduceMotion] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
 
-  async function submit(nextActivation: unknown = activation) {
-    if (isConnecting) return;
-    setMessage(null);
-    if (typeof nextActivation !== 'string' || !nextActivation.trim()) {
-      setMessage('The scanner did not return a valid activation code. Try scanning again or enter the code manually.');
+  useEffect(() => {
+    let isMounted = true;
+    AccessibilityInfo.isReduceMotionEnabled().then(enabled => {
+      if (isMounted) setReduceMotion(enabled);
+    });
+    const subscription = AccessibilityInfo.addEventListener(
+      'reduceMotionChanged',
+      setReduceMotion,
+    );
+    return () => {
+      isMounted = false;
+      subscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (reduceMotion) {
+      transition.setValue(1);
       return;
     }
-    const normalizedActivation = nextActivation.trim();
-    setIsConnecting(true);
+
+    transition.setValue(0);
+    const animation = Animated.timing(transition, {
+      toValue: 1,
+      duration: 240,
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [reduceMotion, stage, transition]);
+
+  useEffect(
+    () => () => {
+      scanSuccessAnimation.current?.stop();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener('keyboardDidShow', () => {
+      setKeyboardVisible(true);
+      setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 80);
+    });
+    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardVisible(false);
+    });
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
+
+  function revealFormActions() {
+    setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 220);
+  }
+
+  async function verify(
+    nextActivation: unknown = activation,
+    source: 'manual' | 'scanner' = 'manual',
+  ) {
+    if (isVerifying || isConnecting) return;
+    setMessage(null);
+    setIsVerifying(true);
     try {
-      await connect({ activation: normalizedActivation, name: registerName });
-      await Promise.allSettled([syncCatalog(), syncStaff(), syncCustomers()]);
+      const result = await verifyDeviceActivation(nextActivation);
+      setVerified(result);
+      if (source === 'scanner' && !reduceMotion) {
+        setScannerVerified(true);
+        scanSuccess.setValue(0);
+        if (Platform.OS === 'android') Vibration.vibrate(24);
+        await new Promise<void>(resolve => {
+          const animation = Animated.sequence([
+            Animated.spring(scanSuccess, {
+              toValue: 1,
+              damping: 13,
+              stiffness: 240,
+              mass: 0.6,
+              useNativeDriver: true,
+            }),
+            Animated.delay(180),
+          ]);
+          scanSuccessAnimation.current = animation;
+          animation.start(() => resolve());
+        });
+      }
+      setStage('name');
+      AccessibilityInfo.announceForAccessibility(
+        `Register connected to ${result.business.name}. Name this register.`,
+      );
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Unable to link this register.');
+      const nextMessage =
+        error instanceof Error
+          ? error.message
+          : 'Unable to verify this activation code.';
+      setMessage(nextMessage);
+      AccessibilityInfo.announceForAccessibility(nextMessage);
     } finally {
-      setIsConnecting(false);
+      setIsVerifying(false);
     }
   }
 
   async function openScanner() {
-    if (isOpeningScanner || isConnecting) return;
+    if (isOpeningScanner || isVerifying || isConnecting) return;
     setMessage(null);
     setIsOpeningScanner(true);
     try {
@@ -58,9 +166,10 @@ export function DeviceActivationScreen() {
         targetFormats: ['qr'],
         enableAutoZoom: true,
       });
-      await submit(barcode.value);
+      await verify(barcode.value, 'scanner');
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       if (!errorMessage.toLowerCase().includes('cancel')) {
         setMessage(`Scanner unavailable: ${errorMessage}`);
       }
@@ -69,177 +178,659 @@ export function DeviceActivationScreen() {
     }
   }
 
+  async function finishSetup() {
+    if (!verified || isConnecting || registerName.trim().length < 2) return;
+    setMessage(null);
+    setIsConnecting(true);
+    try {
+      await connect({
+        activation: verified.activation,
+        name: registerName.trim(),
+      });
+      await Promise.allSettled([syncCatalog(), syncStaff(), syncCustomers()]);
+    } catch (error) {
+      const nextMessage =
+        error instanceof Error
+          ? error.message
+          : 'Unable to finish setting up this register.';
+      setMessage(nextMessage);
+      AccessibilityInfo.announceForAccessibility(nextMessage);
+    } finally {
+      setIsConnecting(false);
+    }
+  }
+
+  function goBack() {
+    setMessage(null);
+    if (stage === 'name') {
+      setVerified(null);
+      setScannerVerified(false);
+      scanSuccess.setValue(0);
+      setStage('pair');
+      return;
+    }
+    onBack?.();
+  }
+
+  function openHelp() {
+    Linking.openURL(`${DEFAULT_BACKEND_URL}/support`).catch(() => {
+      setMessage('OneRegister support could not be opened on this device.');
+    });
+  }
+
+  const isCodeComplete = isCompleteActivationCode(activation);
+  const isBusy = isVerifying || isOpeningScanner;
+  const canFinish = registerName.trim().length >= 2 && !isConnecting;
+  const animatedStageStyle = {
+    opacity: transition,
+    transform: [
+      {
+        translateX: transition.interpolate({
+          inputRange: [0, 1],
+          outputRange: [reduceMotion ? 0 : 14, 0],
+        }),
+      },
+    ],
+  };
+
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={[styles.screen, { backgroundColor: theme.colors.background }]}>
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={[styles.screen, { backgroundColor: theme.colors.background }]}
+    >
       <StatusBar barStyle={theme.isDark ? 'light-content' : 'dark-content'} />
+      <View
+        style={[
+          styles.navigation,
+          { paddingTop: insets.top + 8, borderColor: theme.colors.divider },
+        ]}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={stage === 'name' ? 'Back to pairing' : 'Go back'}
+          hitSlop={10}
+          onPress={goBack}
+          style={({ pressed }) => [
+            styles.navigationButton,
+            {
+              backgroundColor: theme.colors.surfaceMuted,
+              opacity: pressed ? 0.66 : 1,
+            },
+          ]}
+        >
+          <MaterialDesignIcons
+            color={theme.colors.text}
+            name="chevron-left"
+            size={27}
+          />
+        </Pressable>
+        <Pressable
+          accessibilityRole="link"
+          hitSlop={10}
+          onPress={openHelp}
+          style={({ pressed }) => ({ opacity: pressed ? 0.56 : 1 })}
+        >
+          <Text style={[styles.help, { color: theme.colors.success }]}>
+            Help
+          </Text>
+        </Pressable>
+      </View>
+
       <ScrollView
+        ref={scrollViewRef}
         automaticallyAdjustKeyboardInsets
-        contentInsetAdjustmentBehavior="automatic"
+        contentInsetAdjustmentBehavior="never"
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={[
           styles.content,
-          { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 30 },
-        ]}>
-        <View style={styles.shell}>
-          <View style={styles.brandRow}>
-            <BrandLogo compact />
-            <View style={[styles.secureBadge, { backgroundColor: theme.colors.surfaceMuted }]}>
-              <MaterialDesignIcons color={theme.colors.success} name="shield-check-outline" size={15} />
-              <Text style={[styles.secureBadgeText, { color: theme.colors.textMuted }]}>Secure setup</Text>
-            </View>
-          </View>
-
-          <View style={styles.hero}>
-            <View style={styles.stepRow}>
-              <View style={[styles.stepLine, { backgroundColor: theme.colors.success }]} />
-              <Text style={[styles.eyebrow, { color: theme.colors.success }]}>Register pairing</Text>
-            </View>
-            <Text style={[styles.title, { color: theme.colors.text }]}>Connect this register</Text>
-            <Text style={[styles.subtitle, { color: theme.colors.textMuted }]}>Pair this device with a business from the OneRegister dashboard.</Text>
-          </View>
-
-          <View style={[styles.card, { backgroundColor: theme.colors.surface }]}>
-            <View style={styles.cardHeader}>
-              <View>
-                <Text style={[styles.cardTitle, { color: theme.colors.text }]}>Register details</Text>
-                <Text style={[styles.cardSubtitle, { color: theme.colors.textMuted }]}>Name it so your team can recognize it.</Text>
-              </View>
-              <Text style={[styles.required, { color: theme.colors.textMuted }]}>Required</Text>
-            </View>
-
-            <Text style={[styles.label, { color: theme.colors.textMuted }]}>Device name</Text>
-            <TextInput
-              autoCapitalize="words"
-              maxLength={64}
-              placeholder="Front counter"
-              placeholderTextColor={theme.colors.textMuted}
-              value={registerName}
-              onChangeText={setRegisterName}
-              selectionColor={theme.colors.success}
-              style={[styles.input, { color: theme.colors.text, backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }]}
-            />
-
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Scan an activation QR code"
-              disabled={isConnecting || isOpeningScanner}
-              onPress={openScanner}
-              style={({ pressed }) => [
-                styles.scanButton,
-                {
-                  backgroundColor: theme.colors.accent,
-                  transform: [{ scale: pressed ? 0.985 : 1 }],
-                },
-              ]}>
-              <View style={[styles.scanIcon, theme.isDark ? styles.scanIconDark : styles.scanIconLight]}>
-                <MaterialDesignIcons color={theme.colors.accentText} name="qrcode-scan" size={24} />
-              </View>
-              <View style={styles.scanCopy}>
-                <Text style={[styles.scanButtonText, { color: theme.colors.accentText }]}>{isOpeningScanner ? 'Opening scanner…' : 'Scan dashboard QR'}</Text>
-                <Text style={[styles.scanButtonHint, { color: theme.colors.accentText }]}>Secure native scanner</Text>
-              </View>
-              {isOpeningScanner ? <ActivityIndicator color={theme.colors.accentText} /> : <MaterialDesignIcons color={theme.colors.accentText} name="arrow-right" size={21} />}
-            </Pressable>
-
-            <View style={styles.dividerRow}>
-              <View style={[styles.divider, { backgroundColor: theme.colors.divider }]} />
-              <Text style={[styles.orLabel, { color: theme.colors.textMuted }]}>or enter a code</Text>
-              <View style={[styles.divider, { backgroundColor: theme.colors.divider }]} />
-            </View>
-
-            <Text style={[styles.label, { color: theme.colors.textMuted }]}>Activation code</Text>
-            <TextInput
-              autoCapitalize="characters"
-              autoCorrect={false}
-              returnKeyType="done"
-              maxLength={12}
-              placeholder="ABCD 1234"
-              placeholderTextColor={theme.colors.textMuted}
-              value={activation}
-              selectionColor={theme.colors.success}
-              onChangeText={value => {
-                setActivation(value.toUpperCase());
+          {
+            paddingBottom: keyboardVisible
+              ? Math.max(insets.bottom + 150, 170)
+              : Math.max(insets.bottom + 20, 30),
+          },
+        ]}
+      >
+        <Animated.View style={[styles.shell, animatedStageStyle]}>
+          {stage === 'pair' ? (
+            <PairStage
+              activation={activation}
+              connectionError={connectionError}
+              isBusy={isBusy}
+              isCodeComplete={isCodeComplete}
+              isOpeningScanner={isOpeningScanner}
+              scannerVerified={scannerVerified}
+              scanSuccess={scanSuccess}
+              isVerifying={isVerifying}
+              message={message}
+              onActivationChange={value => {
+                setActivation(formatActivationCode(value));
                 setMessage(null);
               }}
-              style={[styles.codeInput, { color: theme.colors.text, backgroundColor: theme.colors.surfaceMuted, borderColor: message ? theme.colors.danger : theme.colors.border }]}
+              onOpenScanner={openScanner}
+              onInputFocus={revealFormActions}
+              onRetry={refresh}
+              onVerify={() => verify()}
             />
-            <Pressable
-              accessibilityRole="button"
-              disabled={isConnecting || !activation.trim() || !registerName.trim()}
-              onPress={() => submit()}
-              style={({ pressed }) => [
-                styles.linkButton,
-                {
-                  backgroundColor: theme.colors.accent,
-                  opacity: isConnecting || !activation.trim() || !registerName.trim() ? 0.34 : 1,
-                  transform: [{ scale: pressed ? 0.985 : 1 }],
-                },
-              ]}>
-              {isConnecting ? <ActivityIndicator color={theme.colors.accentText} /> : (
-                <Text style={[styles.linkButtonText, { color: theme.colors.accentText }]}>Link register</Text>
-              )}
-            </Pressable>
-
-            {message || connectionError ? (
-              <View style={[styles.message, { backgroundColor: theme.colors.accentSoft }]}>
-                <MaterialDesignIcons color={theme.colors.danger} name="alert-circle-outline" size={19} />
-                <Text style={[styles.messageText, { color: theme.colors.text }]}>{message || connectionError}</Text>
-                {connectionError ? (
-                  <Pressable onPress={() => refresh()}><Text style={[styles.retry, { color: theme.colors.text }]}>Retry</Text></Pressable>
-                ) : null}
-              </View>
-            ) : null}
-          </View>
-
-          <View style={styles.securityNote}>
-            <MaterialDesignIcons color={theme.colors.textMuted} name="timer-lock-outline" size={18} />
-            <Text style={[styles.footer, { color: theme.colors.textMuted }]}>Activation codes expire after 10 minutes and work only once.</Text>
-          </View>
-        </View>
+          ) : (
+            <NameStage
+              canFinish={canFinish}
+              isConnecting={isConnecting}
+              message={message}
+              registerName={registerName}
+              onFinish={finishSetup}
+              onInputFocus={revealFormActions}
+              onNameChange={value => {
+                setRegisterName(value);
+                setMessage(null);
+              }}
+            />
+          )}
+        </Animated.View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
+type PairStageProps = {
+  activation: string;
+  connectionError: string | null;
+  isBusy: boolean;
+  isCodeComplete: boolean;
+  isOpeningScanner: boolean;
+  isVerifying: boolean;
+  message: string | null;
+  scannerVerified: boolean;
+  scanSuccess: Animated.Value;
+  onActivationChange: (value: string) => void;
+  onOpenScanner: () => void;
+  onInputFocus: () => void;
+  onRetry: () => void | Promise<void>;
+  onVerify: () => void;
+};
+
+function PairStage({
+  activation,
+  connectionError,
+  isBusy,
+  isCodeComplete,
+  isOpeningScanner,
+  isVerifying,
+  message,
+  scannerVerified,
+  scanSuccess,
+  onActivationChange,
+  onOpenScanner,
+  onInputFocus,
+  onRetry,
+  onVerify,
+}: PairStageProps) {
+  const theme = useAppTheme();
+  return (
+    <View style={styles.pairStage}>
+      <View style={styles.intro}>
+        <Image
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          resizeMode="contain"
+          source={require('../assets/activation/register-terminal.png')}
+          style={styles.deviceArtwork}
+        />
+        <Text style={[styles.title, { color: theme.colors.text }]}>
+          Set up this register
+        </Text>
+        <Text style={[styles.subtitle, { color: theme.colors.textMuted }]}>
+          Connect this device to your OneRegister account to start taking
+          payments.
+        </Text>
+      </View>
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Scan activation QR code"
+        disabled={isBusy}
+        onPress={onOpenScanner}
+        style={({ pressed }) => [
+          styles.scanAction,
+          {
+            opacity: scannerVerified ? 1 : isBusy ? 0.58 : 1,
+            transform: [{ scale: pressed ? 0.985 : 1 }],
+          },
+        ]}
+      >
+        <Animated.View
+          style={[
+            styles.scanIcon,
+            { backgroundColor: theme.colors.accentSoft },
+            scannerVerified
+              ? {
+                  opacity: scanSuccess,
+                  transform: [
+                    {
+                      scale: scanSuccess.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0.72, 1],
+                      }),
+                    },
+                  ],
+                }
+              : null,
+          ]}
+        >
+          <MaterialDesignIcons
+            color={theme.colors.success}
+            name={scannerVerified ? 'check' : 'qrcode-scan'}
+            size={25}
+          />
+        </Animated.View>
+        <View style={styles.scanCopy}>
+          <Text style={[styles.actionTitle, { color: theme.colors.text }]}>
+            {scannerVerified
+              ? 'Code verified'
+              : isOpeningScanner
+              ? 'Opening scanner…'
+              : 'Scan QR code'}
+          </Text>
+          <Text
+            style={[
+              styles.actionDescription,
+              { color: theme.colors.textMuted },
+            ]}
+          >
+            Scan the code in your OneRegister dashboard.
+          </Text>
+        </View>
+        {isOpeningScanner && !scannerVerified ? (
+          <ActivityIndicator color={theme.colors.success} />
+        ) : (
+          <MaterialDesignIcons
+            color={theme.colors.success}
+            name="arrow-right"
+            size={22}
+          />
+        )}
+      </Pressable>
+
+      <View style={styles.dividerRow}>
+        <View
+          style={[styles.divider, { backgroundColor: theme.colors.divider }]}
+        />
+        <Text style={[styles.orLabel, { color: theme.colors.textMuted }]}>
+          or
+        </Text>
+        <View
+          style={[styles.divider, { backgroundColor: theme.colors.divider }]}
+        />
+      </View>
+
+      <View style={styles.manualSection}>
+        <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
+          Enter activation code
+        </Text>
+        <View
+          style={[
+            styles.inputFrame,
+            {
+              backgroundColor: theme.colors.surface,
+              borderColor: message ? theme.colors.danger : theme.colors.border,
+            },
+          ]}
+        >
+          <MaterialDesignIcons
+            color={theme.colors.textMuted}
+            name="key-outline"
+            size={22}
+          />
+          <TextInput
+            accessibilityLabel="Activation code"
+            accessibilityHint="Enter the 8-character code from your OneRegister dashboard"
+            autoCapitalize="characters"
+            autoCorrect={false}
+            editable={!isBusy}
+            maxLength={9}
+            placeholder="ABCD-1234"
+            placeholderTextColor={theme.colors.textMuted}
+            returnKeyType="go"
+            value={activation}
+            selectionColor={theme.colors.success}
+            onChangeText={onActivationChange}
+            onFocus={onInputFocus}
+            onSubmitEditing={() => {
+              if (isCodeComplete) onVerify();
+            }}
+            style={[styles.codeInput, { color: theme.colors.text }]}
+          />
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          disabled={!isCodeComplete || isBusy}
+          onPress={onVerify}
+          style={({ pressed }) => [
+            styles.primaryButton,
+            {
+              backgroundColor: theme.colors.accent,
+              opacity: !isCodeComplete || isBusy ? 0.32 : 1,
+              transform: [{ scale: pressed ? 0.985 : 1 }],
+            },
+          ]}
+        >
+          {isVerifying ? (
+            <ActivityIndicator color={theme.colors.accentText} />
+          ) : (
+            <Text
+              style={[
+                styles.primaryButtonText,
+                { color: theme.colors.accentText },
+              ]}
+            >
+              Continue
+            </Text>
+          )}
+        </Pressable>
+      </View>
+
+      {message || connectionError ? (
+        <InlineMessage
+          message={message || connectionError || ''}
+          onRetry={connectionError ? onRetry : undefined}
+        />
+      ) : null}
+
+      <View style={styles.expiryNote}>
+        <MaterialDesignIcons
+          color={theme.colors.textMuted}
+          name="information-outline"
+          size={17}
+        />
+        <Text style={[styles.expiryText, { color: theme.colors.textMuted }]}>
+          Codes expire after 10 minutes and can only be used once.
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+type NameStageProps = {
+  canFinish: boolean;
+  isConnecting: boolean;
+  message: string | null;
+  registerName: string;
+  onFinish: () => void;
+  onInputFocus: () => void;
+  onNameChange: (value: string) => void;
+};
+
+function NameStage({
+  canFinish,
+  isConnecting,
+  message,
+  registerName,
+  onFinish,
+  onInputFocus,
+  onNameChange,
+}: NameStageProps) {
+  const theme = useAppTheme();
+  return (
+    <View style={styles.nameStage}>
+      <View style={styles.successIntro}>
+        <View
+          style={[
+            styles.successIcon,
+            { backgroundColor: theme.colors.accentSoft },
+          ]}
+        >
+          <MaterialDesignIcons
+            color={theme.colors.success}
+            name="check"
+            size={25}
+          />
+        </View>
+        <Text style={[styles.successLabel, { color: theme.colors.success }]}>
+          Register connected
+        </Text>
+      </View>
+
+      <View style={styles.nameHeading}>
+        <Text style={[styles.title, { color: theme.colors.text }]}>
+          Name this register
+        </Text>
+      </View>
+
+      <View style={styles.nameForm}>
+        <Text style={[styles.inputLabel, { color: theme.colors.text }]}>
+          Register name
+        </Text>
+        <TextInput
+          accessibilityLabel="Register name"
+          autoCapitalize="words"
+          autoFocus
+          maxLength={64}
+          placeholder="Front counter"
+          placeholderTextColor={theme.colors.textMuted}
+          returnKeyType="done"
+          value={registerName}
+          selectionColor={theme.colors.success}
+          onChangeText={onNameChange}
+          onFocus={onInputFocus}
+          onSubmitEditing={onFinish}
+          style={[
+            styles.nameInput,
+            {
+              color: theme.colors.text,
+              backgroundColor: theme.colors.surface,
+              borderColor: message ? theme.colors.danger : theme.colors.border,
+            },
+          ]}
+        />
+        <Pressable
+          accessibilityRole="button"
+          disabled={!canFinish}
+          onPress={onFinish}
+          style={({ pressed }) => [
+            styles.primaryButton,
+            {
+              backgroundColor: theme.colors.accent,
+              opacity: canFinish ? 1 : 0.32,
+              transform: [{ scale: pressed ? 0.985 : 1 }],
+            },
+          ]}
+        >
+          {isConnecting ? (
+            <ActivityIndicator color={theme.colors.accentText} />
+          ) : (
+            <Text
+              style={[
+                styles.primaryButtonText,
+                { color: theme.colors.accentText },
+              ]}
+            >
+              Finish setup
+            </Text>
+          )}
+        </Pressable>
+      </View>
+
+      {message ? <InlineMessage message={message} /> : null}
+    </View>
+  );
+}
+
+function InlineMessage({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry?: () => void | Promise<void>;
+}) {
+  const theme = useAppTheme();
+  return (
+    <View
+      accessibilityLiveRegion="polite"
+      style={[styles.message, { backgroundColor: theme.colors.accentSoft }]}
+    >
+      <MaterialDesignIcons
+        color={theme.colors.danger}
+        name="alert-circle-outline"
+        size={19}
+      />
+      <Text style={[styles.messageText, { color: theme.colors.text }]}>
+        {message}
+      </Text>
+      {onRetry ? (
+        <Pressable accessibilityRole="button" onPress={() => onRetry()}>
+          <Text style={[styles.retry, { color: theme.colors.text }]}>
+            Retry
+          </Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  content: { flexGrow: 1, paddingHorizontal: 22 },
-  shell: { alignSelf: 'center', width: '100%', maxWidth: 560, gap: 24 },
-  brandRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  secureBadge: { minHeight: 32, borderRadius: 10, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  secureBadgeText: { fontSize: 12, fontWeight: '700' },
-  hero: { gap: 8, paddingTop: 8 },
-  stepRow: { flexDirection: 'row', alignItems: 'center', gap: 9 },
-  stepLine: { width: 22, height: 2, borderRadius: 1 },
-  eyebrow: { fontSize: 12, lineHeight: 16, fontWeight: '800', letterSpacing: 0.35 },
-  title: { maxWidth: 500, fontSize: 34, lineHeight: 39, fontWeight: '900', letterSpacing: -1.2 },
-  subtitle: { maxWidth: 480, fontSize: 16, lineHeight: 23 },
-  card: { borderRadius: 20, paddingHorizontal: 18, paddingTop: 20, paddingBottom: 18, gap: 11 },
-  cardHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 5 },
-  cardTitle: { fontSize: 17, lineHeight: 22, fontWeight: '800', letterSpacing: -0.25 },
-  cardSubtitle: { fontSize: 12, lineHeight: 17, marginTop: 2 },
-  required: { fontSize: 11, lineHeight: 16, fontWeight: '700' },
-  label: { fontSize: 11, lineHeight: 16, fontWeight: '800', letterSpacing: 0.35 },
-  input: { minHeight: 50, borderWidth: 1, borderRadius: 11, paddingHorizontal: 14, fontSize: 16 },
-  scanButton: { minHeight: 68, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 11, marginTop: 3 },
-  scanIcon: { width: 43, height: 43, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  scanIconDark: { backgroundColor: 'rgba(16,37,26,0.10)' },
-  scanIconLight: { backgroundColor: 'rgba(255,255,255,0.12)' },
+  navigation: {
+    minHeight: 58,
+    paddingHorizontal: 20,
+    paddingBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  navigationButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  help: { fontSize: 16, lineHeight: 22, fontWeight: '700' },
+  content: { flexGrow: 1, paddingHorizontal: 24 },
+  shell: {
+    flexGrow: 1,
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: 520,
+    paddingTop: 34,
+  },
+  pairStage: { flex: 1 },
+  intro: { alignItems: 'center', gap: 9, marginBottom: 28 },
+  deviceArtwork: { width: 96, height: 96, marginBottom: 5 },
+  title: {
+    maxWidth: 460,
+    textAlign: 'center',
+    fontSize: 31,
+    lineHeight: 37,
+    fontWeight: '900',
+    letterSpacing: -1,
+  },
+  subtitle: {
+    maxWidth: 430,
+    textAlign: 'center',
+    fontSize: 16,
+    lineHeight: 23,
+  },
+  scanAction: {
+    minHeight: 74,
+    paddingHorizontal: 2,
+    paddingVertical: 9,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 13,
+  },
+  scanIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   scanCopy: { flex: 1, gap: 2 },
-  scanButtonText: { fontSize: 15, lineHeight: 19, fontWeight: '800' },
-  scanButtonHint: { fontSize: 11, lineHeight: 15, fontWeight: '600', opacity: 0.68 },
-  dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 11, marginVertical: 6 },
+  actionTitle: { fontSize: 16, lineHeight: 21, fontWeight: '800' },
+  actionDescription: { fontSize: 13, lineHeight: 18 },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 13,
+    marginVertical: 24,
+  },
   divider: { flex: 1, height: StyleSheet.hairlineWidth },
-  orLabel: { fontSize: 11, lineHeight: 16, fontWeight: '600' },
-  codeInput: { minHeight: 58, borderWidth: 1, borderRadius: 11, paddingHorizontal: 15, textAlign: 'center', fontSize: 22, fontWeight: '800', letterSpacing: 3.5 },
-  linkButton: { minHeight: 52, borderRadius: 11, alignItems: 'center', justifyContent: 'center', marginTop: 2 },
-  linkButtonText: { fontSize: 15, fontWeight: '800' },
-  message: { borderRadius: 12, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 9 },
+  orLabel: { fontSize: 13, lineHeight: 18, fontWeight: '600' },
+  manualSection: { gap: 10 },
+  sectionTitle: { fontSize: 19, lineHeight: 25, fontWeight: '800' },
+  inputFrame: {
+    minHeight: 58,
+    borderWidth: 1,
+    borderRadius: 13,
+    paddingHorizontal: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+  },
+  codeInput: {
+    flex: 1,
+    minHeight: 56,
+    paddingVertical: 0,
+    fontSize: 18,
+    lineHeight: 25,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    fontVariant: ['tabular-nums'],
+  },
+  primaryButton: {
+    minHeight: 54,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  primaryButtonText: { fontSize: 16, lineHeight: 21, fontWeight: '800' },
+  expiryNote: {
+    marginTop: 'auto',
+    paddingTop: 24,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 7,
+  },
+  expiryText: {
+    flexShrink: 1,
+    maxWidth: 340,
+    textAlign: 'center',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  message: {
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
   messageText: { flex: 1, fontSize: 13, lineHeight: 18 },
   retry: { fontSize: 13, fontWeight: '900' },
-  securityNote: { flexDirection: 'row', alignItems: 'center', alignSelf: 'center', gap: 7, paddingHorizontal: 12 },
-  footer: { flexShrink: 1, fontSize: 12, lineHeight: 17 },
+  nameStage: { paddingTop: 42 },
+  successIntro: { alignItems: 'center', gap: 10, marginBottom: 30 },
+  successIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  successLabel: { fontSize: 14, lineHeight: 19, fontWeight: '800' },
+  nameHeading: { alignItems: 'center' },
+  nameForm: { marginTop: 32, gap: 8 },
+  inputLabel: { fontSize: 14, lineHeight: 19, fontWeight: '700' },
+  nameInput: {
+    minHeight: 56,
+    borderWidth: 1,
+    borderRadius: 13,
+    paddingHorizontal: 15,
+    fontSize: 17,
+    lineHeight: 22,
+  },
 });

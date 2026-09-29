@@ -36,8 +36,13 @@ export function CheckoutDiscountsScreen() {
     }
   }
 
-  function tryManagerUnlock(candidatePin: string) {
-    const matchedStaff = authorizePermissionPin(candidatePin, 'apply_discounts');
+  async function tryManagerUnlock(candidatePin: string) {
+    let matchedStaff = null;
+    try {
+      matchedStaff = await authorizePermissionPin(candidatePin, 'apply_discounts');
+    } catch {
+      // Use the same intentionally vague message for invalid and unavailable verification.
+    }
     if (!matchedStaff || !restrictedDiscount) {
       setManagerPin('');
       setPinError('Wrong PIN.');
@@ -62,7 +67,9 @@ export function CheckoutDiscountsScreen() {
       }
       const nextPin = `${current}${value}`;
       if (nextPin.length === 4) {
-        setTimeout(() => tryManagerUnlock(nextPin), 0);
+        setTimeout(() => {
+          tryManagerUnlock(nextPin).catch(() => undefined);
+        }, 0);
       }
       return nextPin;
     });

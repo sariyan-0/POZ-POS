@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -27,6 +30,10 @@ import {
 } from '../services/api/terminalRefunds';
 import { useAppStripeTerminal } from '../terminal/StripeTerminalProvider';
 import { useAppTheme } from '../theme';
+import {
+  acceptMoneyDecimalInput,
+  capMoneyAmountInCents,
+} from '../utils/money';
 import { createId } from '../utils/id';
 import { formatCurrency, formatDateTime } from '../utils/format';
 
@@ -177,7 +184,12 @@ export function TransactionDetailScreen() {
       return;
     }
 
-    const approver = authorizePermissionPin(managerPin, 'issue_refunds');
+    let approver = null;
+    try {
+      approver = await authorizePermissionPin(managerPin, 'issue_refunds');
+    } catch {
+      // The message below covers invalid PINs and temporary verification failures.
+    }
     if (!approver) {
       setRefundError('Enter a PIN for someone allowed to issue refunds.');
       setRefundStep('failed');
@@ -489,7 +501,11 @@ export function TransactionDetailScreen() {
         managerPin={managerPin}
         onSelectReason={setSelectedReason}
         onSelectAmountMode={setRefundAmountMode}
-        onChangeCustomAmount={setCustomRefundAmount}
+        onChangeCustomAmount={value =>
+          setCustomRefundAmount(current =>
+            acceptMoneyDecimalInput(current, value),
+          )
+        }
         onChangeCustomPercentage={setCustomRefundPercentage}
         onChangeOtherReason={setOtherReason}
         onChangeItemQuantity={(itemId, quantity) =>
@@ -716,14 +732,22 @@ function RefundModal({
       visible={visible}
       onRequestClose={onClose}
     >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.refundKeyboardAvoider}
+      >
       <View
         style={[styles.modalScrim, { backgroundColor: theme.colors.overlay }]}
       >
-        <View
+        <ScrollView
+          automaticallyAdjustKeyboardInsets
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          keyboardShouldPersistTaps="handled"
           style={[
             styles.refundSheet,
             { backgroundColor: theme.colors.surface },
           ]}
+          contentContainerStyle={styles.refundSheetContent}
         >
           <View style={styles.sheetHandle} />
           {step === 'amount' ? (
@@ -1209,7 +1233,7 @@ function RefundModal({
               />
             </>
           ) : null}
-        </View>
+        </ScrollView>
         {showManagerPinPad && step === 'confirm' ? (
           <View
             style={[
@@ -1239,6 +1263,7 @@ function RefundModal({
           </View>
         ) : null}
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -1541,7 +1566,7 @@ function parseMoneyToCents(value: string): number {
     return 0;
   }
 
-  return Math.round(parsed * 100);
+  return capMoneyAmountInCents(parsed * 100);
 }
 
 function clampRefundAmount(amount: number, maxAmount: number): number {
@@ -1604,9 +1629,13 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'flex-end',
   },
+  refundKeyboardAvoider: { flex: 1 },
   refundSheet: {
+    maxHeight: '92%',
     borderTopLeftRadius: 30,
     borderTopRightRadius: 30,
+  },
+  refundSheetContent: {
     padding: 22,
     gap: 18,
   },

@@ -151,6 +151,8 @@ export interface StaffMember {
   name: string;
   pinHash: string;
   pinSalt: string;
+  /** The dashboard has a PIN, while its credentials remain server-side. */
+  pinSet?: boolean;
   role: 'owner' | 'manager' | 'cashier';
   permissions?: StaffPermission[];
   active: boolean;

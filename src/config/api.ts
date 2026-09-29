@@ -1,6 +1,7 @@
 export const apiConfig = {
   endpoints: {
     health: '/api/health',
+    verifyDeviceActivation: '/api/devices/verify-activation',
     claimDevice: '/api/devices/claim',
     currentDevice: '/api/devices/current',
     terminalConnectionToken: '/api/terminal/connection-token',
@@ -14,5 +15,6 @@ export const apiConfig = {
     catalog: '/api/catalog',
     orders: '/api/orders',
     staff: '/api/staff',
+    verifyStaffPin: '/api/staff/verify-pin',
   },
 } as const;

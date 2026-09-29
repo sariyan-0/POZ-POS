@@ -12,7 +12,12 @@ const INSTALLATION_ID_KEY = 'oneregister/device-installation-id/v1';
 const CONNECTION_CACHE_KEY = 'oneregister/device-connection/v1';
 
 export type ConnectedDevice = {
-  device: { id: string; name: string; platform: string; lastSeenAt?: string | null };
+  device: {
+    id: string;
+    name: string;
+    platform: string;
+    lastSeenAt?: string | null;
+  };
   business: { id: string; name: string; stripeConnected: boolean };
 };
 
@@ -26,6 +31,20 @@ type ClaimResponse = {
 };
 
 type CurrentResponse = { success: true; data: ConnectedDevice };
+
+type VerifyActivationResponse = {
+  success: true;
+  data: {
+    business: { id: string; name: string };
+    expiresAt: string;
+  };
+};
+
+export type VerifiedDeviceActivation = {
+  activation: string;
+  business: { id: string; name: string };
+  expiresAt: string;
+};
 
 function isConnectedDevice(value: unknown): value is ConnectedDevice {
   if (!value || typeof value !== 'object') return false;
@@ -68,17 +87,23 @@ export async function hasStoredDeviceCredential() {
 }
 
 export function activationErrorMessage(error: HttpResponseError): string {
-  const response = error.payload as { error?: { message?: string } | string } | string | null;
-  const responseMessage = typeof response === 'object' && response !== null
-    ? (typeof response.error === 'string' ? response.error : response.error?.message)
-    : undefined;
+  const response = error.payload as
+    | { error?: { message?: string } | string }
+    | string
+    | null;
+  const responseMessage =
+    typeof response === 'object' && response !== null
+      ? typeof response.error === 'string'
+        ? response.error
+        : response.error?.message
+      : undefined;
 
   if (responseMessage) return responseMessage;
 
   if (
     error.status === 403 &&
     typeof response === 'string' &&
-    (/cf-mitigated|challenges\.cloudflare\.com|Just a moment/i.test(response))
+    /cf-mitigated|challenges\.cloudflare\.com|Just a moment/i.test(response)
   ) {
     return 'Cloudflare blocked this register app before it reached OneRegister. Disable Bot Fight Mode for the domain, then try again.';
   }
@@ -92,7 +117,11 @@ export function activationErrorMessage(error: HttpResponseError): string {
 
 function isDeviceAuthorizationFailure(error: HttpResponseError) {
   if (error.status === 401) return true;
-  if (error.status !== 403 || !error.payload || typeof error.payload !== 'object') {
+  if (
+    error.status !== 403 ||
+    !error.payload ||
+    typeof error.payload !== 'object'
+  ) {
     return false;
   }
 
@@ -100,8 +129,12 @@ function isDeviceAuthorizationFailure(error: HttpResponseError) {
   return payload.error?.code === 'business_unavailable';
 }
 
-export function readActivationPayload(input: unknown): { code: string; serverUrl?: string } {
-  if (typeof input !== 'string') throw new Error('The scanner did not return a valid activation code.');
+export function readActivationPayload(input: unknown): {
+  code: string;
+  serverUrl?: string;
+} {
+  if (typeof input !== 'string')
+    throw new Error('The scanner did not return a valid activation code.');
   const trimmed = input.trim();
   if (!trimmed) throw new Error('Enter an activation code.');
 
@@ -115,7 +148,10 @@ export function readActivationPayload(input: unknown): { code: string; serverUrl
     const code = parsed.searchParams.get('code')?.trim() ?? '';
     const server = parsed.searchParams.get('server')?.trim();
     if (!code) throw new Error('This QR code is not a OneRegister activation.');
-    return { code, serverUrl: server ? normalizeBackendUrl(server) : undefined };
+    return {
+      code,
+      serverUrl: server ? normalizeBackendUrl(server) : undefined,
+    };
   }
 
   return { code: trimmed };
@@ -126,6 +162,63 @@ export function resolveActivationServerUrl(payload: { serverUrl?: string }) {
   // development server saved by an older build. Development QR codes remain
   // able to opt into their explicitly encoded server URL.
   return payload.serverUrl ?? DEFAULT_BACKEND_URL;
+}
+
+export function formatActivationCode(value: string) {
+  const normalized = value
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .slice(0, 8);
+  return normalized.length > 4
+    ? `${normalized.slice(0, 4)}-${normalized.slice(4)}`
+    : normalized;
+}
+
+export function isCompleteActivationCode(value: string) {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, '').length === 8;
+}
+
+export async function verifyDeviceActivation(
+  activation: unknown,
+): Promise<VerifiedDeviceActivation> {
+  const parsed = readActivationPayload(activation);
+  const serverUrl = resolveActivationServerUrl(parsed);
+
+  try {
+    const payload = await apiClient.post<VerifyActivationResponse>(
+      apiConfig.endpoints.verifyDeviceActivation,
+      { code: parsed.code },
+      { baseUrlOverride: serverUrl, authTokenOverride: '' },
+    );
+
+    if (
+      payload.success !== true ||
+      !payload.data?.business?.id ||
+      !payload.data.business.name ||
+      !payload.data.expiresAt
+    ) {
+      throw new Error('The server returned an invalid activation response.');
+    }
+
+    return {
+      activation: activation as string,
+      business: payload.data.business,
+      expiresAt: payload.data.expiresAt,
+    };
+  } catch (error) {
+    if (error instanceof HttpResponseError) {
+      throw new Error(activationErrorMessage(error));
+    }
+    if (
+      error instanceof Error &&
+      error.message.includes('invalid activation')
+    ) {
+      throw error;
+    }
+    throw new Error(
+      'Could not reach OneRegister. Check your connection and try again.',
+    );
+  }
 }
 
 async function getInstallationId() {
@@ -141,20 +234,30 @@ export async function claimDevice(input: { activation: string; name: string }) {
   const serverUrl = resolveActivationServerUrl(parsed);
   let payload: ClaimResponse;
   try {
-    payload = await apiClient.post<ClaimResponse>(apiConfig.endpoints.claimDevice, {
-      code: parsed.code,
-      installationId: await getInstallationId(),
-      name: input.name.trim() || 'Point of sale',
-      platform: Platform.OS === 'ios' || Platform.OS === 'android' ? Platform.OS : 'unknown',
-    }, { baseUrlOverride: serverUrl, authTokenOverride: '' });
+    payload = await apiClient.post<ClaimResponse>(
+      apiConfig.endpoints.claimDevice,
+      {
+        code: parsed.code,
+        installationId: await getInstallationId(),
+        name: input.name.trim() || 'Point of sale',
+        platform:
+          Platform.OS === 'ios' || Platform.OS === 'android'
+            ? Platform.OS
+            : 'unknown',
+      },
+      { baseUrlOverride: serverUrl, authTokenOverride: '' },
+    );
   } catch (error) {
     if (error instanceof HttpResponseError) {
       throw new Error(activationErrorMessage(error));
     }
-    throw new Error('Could not reach OneRegister. Check your connection and try again.');
+    throw new Error(
+      'Could not reach OneRegister. Check your connection and try again.',
+    );
   }
 
-  if (payload.success !== true || !payload.data?.token) throw new Error('The server returned an invalid activation response.');
+  if (payload.success !== true || !payload.data?.token)
+    throw new Error('The server returned an invalid activation response.');
   await backendConfigService.saveServerUrl(serverUrl);
   await authCredentialStore.setCredential(payload.data.token);
   await terminalConfigService.reset();
@@ -173,12 +276,17 @@ export async function loadCurrentDevice(): Promise<ConnectedDevice | null> {
     return null;
   }
   try {
-    const payload = await apiClient.get<CurrentResponse>(apiConfig.endpoints.currentDevice);
+    const payload = await apiClient.get<CurrentResponse>(
+      apiConfig.endpoints.currentDevice,
+    );
     if (payload.success !== true) return null;
     await saveCachedConnection(payload.data);
     return payload.data;
   } catch (error) {
-    if (error instanceof HttpResponseError && isDeviceAuthorizationFailure(error)) {
+    if (
+      error instanceof HttpResponseError &&
+      isDeviceAuthorizationFailure(error)
+    ) {
       await authCredentialStore.resetCredential();
       await clearCachedConnection();
       return null;

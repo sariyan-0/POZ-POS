@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Platform,
   Image,
   Modal,
   Pressable,
@@ -16,6 +17,10 @@ import { ModifierSet } from '../models/pos';
 import { RootStackParamList, useRootNavigation } from '../navigation/AppNavigator';
 import { useAppTheme } from '../theme';
 import { createId } from '../utils/id';
+import {
+  acceptMoneyDecimalInput,
+  capMoneyAmountInCents,
+} from '../utils/money';
 import { getProductTileInitials, getReadableTileTextColor } from '../utils/productTile';
 import { usePOS } from '../hooks/usePOS';
 
@@ -57,7 +62,9 @@ export function ModifierSetEditorScreen() {
     .filter(row => row.name.trim() || row.price.trim())
     .map(row => ({
       name: row.name.trim(),
-      price: Math.max(0, Math.round((Number.parseFloat(row.price || '0') || 0) * 100)),
+      price: capMoneyAmountInCents(
+        (Number.parseFloat(row.price || '0') || 0) * 100,
+      ),
     }));
   const normalizedExistingRows = (existing?.modifiers ?? []).map(row => ({
     name: row.name.trim(),
@@ -145,9 +152,8 @@ export function ModifierSetEditorScreen() {
         .map(row => ({
           id: row.id.startsWith('modrow') ? createId('modi') : row.id,
           name: row.name.trim(),
-          priceAdjustmentInCents: Math.max(
-            0,
-            Math.round((Number.parseFloat(row.price || '0') || 0) * 100),
+          priceAdjustmentInCents: capMoneyAmountInCents(
+            (Number.parseFloat(row.price || '0') || 0) * 100,
           ),
         })),
     };
@@ -188,6 +194,8 @@ export function ModifierSetEditorScreen() {
       </View>
 
       <ScrollView
+        automaticallyAdjustKeyboardInsets
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled">
         <Text style={[styles.helperText, { color: theme.colors.text }]}>
@@ -277,7 +285,13 @@ export function ModifierSetEditorScreen() {
               />
               <TextInput
                 value={row.price}
-                onChangeText={text => updateRow(row.id, 'price', text)}
+                onChangeText={text =>
+                  updateRow(
+                    row.id,
+                    'price',
+                    acceptMoneyDecimalInput(row.price, text),
+                  )
+                }
                 placeholder="$0.00"
                 placeholderTextColor={theme.colors.textMuted}
                 keyboardType="numeric"

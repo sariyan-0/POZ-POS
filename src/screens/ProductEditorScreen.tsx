@@ -42,6 +42,10 @@ import {
 import { useAppTheme } from '../theme';
 import { createId } from '../utils/id';
 import {
+  acceptMoneyDecimalInput,
+  capMoneyAmountInCents,
+} from '../utils/money';
+import {
   getProductTileLabel,
   getReadableTileTextColor,
   PRODUCT_TILE_COLORS,
@@ -106,14 +110,17 @@ export function ProductEditorScreen() {
     selectedUnitType === 'mass' ? `Per mass (${selectedMassUnit})` : 'Per item';
 
   function parsePriceInCents(text: string) {
-    return Math.max(0, Math.round((Number.parseFloat(text || '0') || 0) * 100));
+    return capMoneyAmountInCents(
+      (Number.parseFloat(text || '0') || 0) * 100,
+    );
   }
 
   function updatePrice(text: string) {
-    setPriceText(text);
+    const nextPriceText = acceptMoneyDecimalInput(priceText, text);
+    setPriceText(nextPriceText);
     setProduct(current => ({
       ...current,
-      priceInCents: parsePriceInCents(text),
+      priceInCents: parsePriceInCents(nextPriceText),
     }));
   }
 
@@ -418,6 +425,8 @@ export function ProductEditorScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.surface }}>
       <ScrollView
         ref={scrollViewRef}
+        automaticallyAdjustKeyboardInsets
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         style={{ flex: 1, backgroundColor: theme.colors.surface }}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"

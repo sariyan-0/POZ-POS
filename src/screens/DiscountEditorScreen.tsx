@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { RouteProp, useRoute } from '@react-navigation/native';
 import {
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,6 +16,10 @@ import { Discount } from '../models/pos';
 import { createEmptyDiscount, usePOS } from '../hooks/usePOS';
 import { RootStackParamList, useRootNavigation } from '../navigation/AppNavigator';
 import { useAppTheme } from '../theme';
+import {
+  acceptMoneyDecimalInput,
+  capMoneyAmountInCents,
+} from '../utils/money';
 
 type DiscountEditorRoute = RouteProp<RootStackParamList, 'DiscountEditor'>;
 
@@ -63,6 +68,9 @@ export function DiscountEditorScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.surface }}>
       <ScrollView
+        automaticallyAdjustKeyboardInsets
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        keyboardShouldPersistTaps="handled"
         style={{ flex: 1, backgroundColor: theme.colors.surface }}
         contentContainerStyle={styles.content}>
         <View style={[styles.headerRow, { borderBottomColor: theme.colors.border }]}>
@@ -143,13 +151,29 @@ export function DiscountEditorScreen() {
                 : ''
             }
             onChangeText={text =>
-              setDiscount(current => ({
-                ...current,
-                amount:
+              setDiscount(current => {
+                const currentText = current.amount
+                  ? String(
+                      current.amount / (current.type === 'fixed' ? 100 : 1),
+                    )
+                  : '';
+                const nextText =
                   current.type === 'fixed'
-                    ? Math.max(0, Math.round((Number.parseFloat(text || '0') || 0) * 100))
-                    : Math.max(0, Number.parseFloat(text || '0') || 0),
-              }))
+                    ? acceptMoneyDecimalInput(currentText, text)
+                    : text;
+                return {
+                  ...current,
+                  amount:
+                    current.type === 'fixed'
+                      ? capMoneyAmountInCents(
+                          (Number.parseFloat(nextText || '0') || 0) * 100,
+                        )
+                      : Math.max(
+                          0,
+                          Number.parseFloat(nextText || '0') || 0,
+                        ),
+                };
+              })
             }
             placeholder="$0.00"
             placeholderTextColor={theme.colors.textMuted}

@@ -15,11 +15,16 @@ export function PermissionBoundary({ permission, title, children }: PropsWithChi
   const [showPinPad, setShowPinPad] = useState(false);
   if (hasPermission(permission, currentStaff)) return <>{children}</>;
 
-  function approve(candidatePin = pin) {
-    const approver = authorizePermissionPin(candidatePin, permission);
-    if (!approver) { setPin(''); setError('That PIN does not have access to this area.'); return; }
-    unlockWithPin(candidatePin, approver.id);
-    setShowPinPad(false);
+  async function approve(candidatePin = pin) {
+    try {
+      const approver = await authorizePermissionPin(candidatePin, permission);
+      if (!approver) { setPin(''); setError('That PIN does not have access to this area.'); return; }
+      await unlockWithPin(candidatePin, approver.id);
+      setShowPinPad(false);
+    } catch {
+      setPin('');
+      setError('That PIN was not recognized, or sign-in is unavailable.');
+    }
   }
 
   return <AppScreen title="Approval required" subtitle={`${currentStaff?.name ?? 'This staff member'} does not have access to ${title.toLowerCase()}.`}>
@@ -38,7 +43,9 @@ export function PermissionBoundary({ permission, title, children }: PropsWithChi
       value={pin}
       error={error}
       onChange={value => { setPin(value); setError(''); }}
-      onSubmit={approve}
+      onSubmit={candidatePin => {
+        approve(candidatePin).catch(() => undefined);
+      }}
       submitLabel="Unlock"
     />
   </AppScreen>;

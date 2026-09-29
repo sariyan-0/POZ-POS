@@ -59,7 +59,9 @@ export function SecuritySettingsScreen() {
     () => state.staffMembers.filter(staffMember => staffMember.active),
     [state.staffMembers],
   );
-  const currentStaffHasPin = !!currentStaff?.pinHash?.trim() && !!currentStaff?.pinSalt?.trim();
+  const currentStaffHasPin =
+    currentStaff?.pinSet === true ||
+    (!!currentStaff?.pinHash?.trim() && !!currentStaff?.pinSalt?.trim());
 
   if (connection) {
     return <AppScreen title="People & security" subtitle="People and permissions are managed from the OneRegister web dashboard.">

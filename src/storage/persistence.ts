@@ -17,5 +17,7 @@ export async function loadPOSState(): Promise<POSState | null> {
 }
 
 export async function savePOSState(state: POSState): Promise<void> {
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  const persistedState = { ...state };
+  delete persistedState.currentStaffId;
+  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(persistedState));
 }

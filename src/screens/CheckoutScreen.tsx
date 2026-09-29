@@ -28,6 +28,7 @@ import { CartItem, Discount, Product } from '../models/pos';
 import { useRootNavigation } from '../navigation/AppNavigator';
 import { useAppTheme } from '../theme';
 import { formatCurrency } from '../utils/format';
+import { appendMoneyDigits } from '../utils/money';
 import { getProductTileInitials, getReadableTileTextColor } from '../utils/productTile';
 import { feedback } from '../services/feedback';
 
@@ -208,7 +209,7 @@ export function CheckoutScreen() {
 
   function appendDigit(value: string) {
     feedback.selection();
-    setEntryDigits(current => `${current}${value}`.replace(/^0+(?=\d)/, ''));
+    setEntryDigits(current => appendMoneyDigits(current, value));
   }
 
   function clearEntry() {
@@ -356,8 +357,13 @@ export function CheckoutScreen() {
     }
   }
 
-  function tryManagerUnlock(candidatePin: string) {
-    const matchedStaff = authorizePermissionPin(candidatePin, 'apply_discounts');
+  async function tryManagerUnlock(candidatePin: string) {
+    let matchedStaff = null;
+    try {
+      matchedStaff = await authorizePermissionPin(candidatePin, 'apply_discounts');
+    } catch {
+      // Use the same intentionally vague message for invalid and unavailable verification.
+    }
     if (!matchedStaff || !restrictedDiscount) {
       feedback.warning();
       setManagerPin('');
@@ -383,7 +389,9 @@ export function CheckoutScreen() {
       }
       const nextPin = `${current}${value}`;
       if (nextPin.length === 4) {
-        setTimeout(() => tryManagerUnlock(nextPin), 0);
+        setTimeout(() => {
+          tryManagerUnlock(nextPin).catch(() => undefined);
+        }, 0);
       }
       return nextPin;
     });

@@ -72,6 +72,24 @@ def enableProguardInReleaseBuilds = true
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
+def releaseKeystoreProperties = new Properties()
+def releaseKeystorePropertiesFile = rootProject.file('keystore.properties')
+if (releaseKeystorePropertiesFile.exists()) {
+    releaseKeystoreProperties.load(new FileInputStream(releaseKeystorePropertiesFile))
+}
+def releaseSigningKeys = ['storeFile', 'storePassword', 'keyAlias', 'keyPassword']
+def missingReleaseSigningKeys = releaseSigningKeys.findAll {
+    !releaseKeystoreProperties[it]?.toString()?.trim()
+}
+def releaseStoreFile = releaseKeystoreProperties['storeFile']
+        ? file(releaseKeystoreProperties['storeFile'])
+        : null
+def releaseSigningReady = releaseKeystorePropertiesFile.exists() &&
+        missingReleaseSigningKeys.isEmpty() &&
+        releaseStoreFile?.exists()
+def localReleaseSigning = project.findProperty('oneRegisterLocalRelease')
+        ?.toString()?.toBoolean() ?: false
+
 android {
     ndkVersion rootProject.ext.ndkVersion
     buildToolsVersion rootProject.ext.buildToolsVersion
@@ -92,19 +110,55 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        if (releaseSigningReady) {
+            release {
+                storeFile releaseStoreFile
+                storePassword releaseKeystoreProperties['storePassword']
+                keyAlias releaseKeystoreProperties['keyAlias']
+                keyPassword releaseKeystoreProperties['keyPassword']
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            if (localReleaseSigning) {
+                // Local sideloading only. Production release tasks still require
+                // a private upload key and can never silently fall back to this.
+                signingConfig signingConfigs.debug
+            } else if (releaseSigningReady) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled enableProguardInReleaseBuilds
             shrinkResources enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
+    }
+}
+
+gradle.taskGraph.whenReady { graph ->
+    def requestedReleaseArtifact = graph.allTasks.any { task ->
+        task.project == project &&
+                task.name.toLowerCase().contains('release') &&
+                (task.name.startsWith('assemble') ||
+                        task.name.startsWith('bundle') ||
+                        task.name.startsWith('package'))
+    }
+    if (requestedReleaseArtifact && localReleaseSigning) {
+        logger.warn('OneRegister local release: using the Android debug certificate. This APK is for local sideloading only and must not be published.')
+    }
+    if (requestedReleaseArtifact && !releaseSigningReady && !localReleaseSigning) {
+        def detail
+        if (!releaseKeystorePropertiesFile.exists()) {
+            detail = "Missing ${releaseKeystorePropertiesFile}. Copy keystore.properties.example and provide the upload-key credentials."
+        } else if (!missingReleaseSigningKeys.isEmpty()) {
+            detail = "Missing values in ${releaseKeystorePropertiesFile}: ${missingReleaseSigningKeys.join(', ')}."
+        } else {
+            detail = "The configured release keystore does not exist: ${releaseStoreFile}."
+        }
+        throw new GradleException("OneRegister release signing is not configured. ${detail}")
     }
 }
 

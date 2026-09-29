@@ -40,7 +40,7 @@ export const initialPOSState: POSState = {
       active: true,
     },
   ],
-  currentStaffId: 'staff-owner',
+  currentStaffId: undefined,
   transactions: [],
   settings: defaultSettings,
 };

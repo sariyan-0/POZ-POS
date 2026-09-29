@@ -25,7 +25,7 @@ type ReaderMode = 'tap_to_pay' | 'bluetooth' | 'internet' | 'simulated';
 type SetupStep = 'type' | 'location' | 'discovery' | 'connecting' | 'success';
 type IconName = React.ComponentProps<typeof MaterialDesignIcons>['name'];
 
-const READER_MODES: Array<{
+const ALL_READER_MODES: Array<{
   mode: ReaderMode;
   title: string;
   shortTitle: string;
@@ -68,6 +68,10 @@ const READER_MODES: Array<{
   },
 ];
 
+const READER_MODES = ALL_READER_MODES.filter(
+  item => __DEV__ || item.mode !== 'simulated',
+);
+
 function modeDetails(mode: ReaderMode) {
   return READER_MODES.find(item => item.mode === mode) ?? READER_MODES[0];
 }
@@ -102,7 +106,12 @@ function getReaderIdentifier(
 export function DeveloperTerminalPanel() {
   const theme = useAppTheme();
   const terminal = useAppStripeTerminal();
-  const { connection, error: connectionRefreshError, isChecking, refresh } = useDeviceConnection();
+  const {
+    connection,
+    error: connectionRefreshError,
+    isChecking,
+    refresh,
+  } = useDeviceConnection();
   const isStripeReady = connection?.business.stripeConnected === true;
   const insets = useSafeAreaInsets();
   const hasPresentedSetup = useRef(false);
@@ -229,9 +238,7 @@ export function DeveloperTerminalPanel() {
       cancelConnection().catch(() => undefined);
       return;
     }
-    if (
-      updateIsVisible
-    ) {
+    if (updateIsVisible) {
       return;
     }
     setStep(null);
@@ -355,38 +362,68 @@ export function DeveloperTerminalPanel() {
             backgroundColor: theme.colors.surface,
             borderColor: `${theme.colors.warning}70`,
           },
-        ]}>
-        <View style={[styles.stripeBlockerIcon, { backgroundColor: `${theme.colors.warning}22` }]}>
+        ]}
+      >
+        <View
+          style={[
+            styles.stripeBlockerIcon,
+            { backgroundColor: `${theme.colors.warning}22` },
+          ]}
+        >
           <MaterialDesignIcons
             color={theme.colors.warning}
             name="credit-card-off-outline"
             size={32}
           />
         </View>
-        <Text style={[styles.stripeBlockerKicker, { color: theme.colors.warning }]}>
+        <Text
+          style={[styles.stripeBlockerKicker, { color: theme.colors.warning }]}
+        >
           PAYMENTS NOT CONFIGURED
         </Text>
         <Text style={[styles.stripeBlockerTitle, { color: theme.colors.text }]}>
           Connect Stripe before setting up a reader
         </Text>
-        <Text style={[styles.stripeBlockerBody, { color: theme.colors.textMuted }]}>
-          Reader setup is locked until Stripe onboarding is complete. Open the OneRegister Dashboard, go to Payments, and follow the Stripe setup steps.
+        <Text
+          style={[styles.stripeBlockerBody, { color: theme.colors.textMuted }]}
+        >
+          Reader setup is locked until Stripe onboarding is complete. Open the
+          OneRegister Dashboard, go to Payments, and follow the Stripe setup
+          steps.
         </Text>
-        <View style={[styles.stripeSteps, { backgroundColor: theme.colors.surfaceMuted }]}>
-          <Text style={[styles.stripeStep, { color: theme.colors.text }]}>1  Open OneRegister Dashboard</Text>
-          <Text style={[styles.stripeStep, { color: theme.colors.text }]}>2  Go to Payments and finish Stripe setup</Text>
-          <Text style={[styles.stripeStep, { color: theme.colors.text }]}>3  Return here and refresh the status</Text>
+        <View
+          style={[
+            styles.stripeSteps,
+            { backgroundColor: theme.colors.surfaceMuted },
+          ]}
+        >
+          <Text style={[styles.stripeStep, { color: theme.colors.text }]}>
+            1 Open OneRegister Dashboard
+          </Text>
+          <Text style={[styles.stripeStep, { color: theme.colors.text }]}>
+            2 Go to Payments and finish Stripe setup
+          </Text>
+          <Text style={[styles.stripeStep, { color: theme.colors.text }]}>
+            3 Return here and refresh the status
+          </Text>
         </View>
         <PrimaryButton
           disabled={isChecking}
           icon="refresh"
-          label={isChecking ? 'Checking Stripe status…' : 'Refresh Stripe status'}
+          label={
+            isChecking ? 'Checking Stripe status…' : 'Refresh Stripe status'
+          }
           onPress={() => refresh().catch(() => undefined)}
         />
         {connectionRefreshError ? (
           <InlineError message={connectionRefreshError} />
         ) : null}
-        <Text style={[styles.stripeBlockerFootnote, { color: theme.colors.textMuted }]}>
+        <Text
+          style={[
+            styles.stripeBlockerFootnote,
+            { color: theme.colors.textMuted },
+          ]}
+        >
           Cash payments are still available while Stripe is being configured.
         </Text>
       </View>
@@ -1588,7 +1625,8 @@ function SecondaryButton({
         style={[
           styles.secondaryButtonText,
           { color: destructive ? theme.colors.danger : theme.colors.text },
-        ]}>
+        ]}
+      >
         {label}
       </Text>
     </Pressable>
@@ -1679,7 +1717,12 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   stripeBlockerKicker: { fontSize: 11, fontWeight: '900', letterSpacing: 1.05 },
-  stripeBlockerTitle: { fontSize: 27, lineHeight: 32, fontWeight: '900', letterSpacing: -0.7 },
+  stripeBlockerTitle: {
+    fontSize: 27,
+    lineHeight: 32,
+    fontWeight: '900',
+    letterSpacing: -0.7,
+  },
   stripeBlockerBody: { fontSize: 15, lineHeight: 22 },
   stripeSteps: { borderRadius: 18, padding: 16, gap: 12, marginVertical: 4 },
   stripeStep: { fontSize: 13, lineHeight: 19, fontWeight: '700' },

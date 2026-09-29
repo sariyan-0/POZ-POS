@@ -1,6 +1,7 @@
 import React, { PropsWithChildren } from 'react';
 import {
   Image,
+  Platform,
   Pressable,
   ScrollView,
   StyleProp,
@@ -93,6 +94,9 @@ export function AppScreen({
 
   return (
     <ScrollView
+      automaticallyAdjustKeyboardInsets
+      keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+      keyboardShouldPersistTaps="handled"
       style={{ flex: 1, backgroundColor: theme.colors.background }}
       contentContainerStyle={[
         styles.screenContent,

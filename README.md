@@ -214,6 +214,52 @@ Lint the project with:
 npm run lint
 ```
 
+## Production release
+
+The JavaScript package version is `1.0.0`. The native marketing version is `1.0`, with iOS build number and Android version code `1`.
+
+### Local Android use without Google Play
+
+Google Play is not required to run or sideload OneRegister. For day-to-day development, use `npm run android`. To create an optimized standalone APK signed with the local Android development certificate, use the familiar `npm run android:release:apk` command (the alias `npm run android:local:apk` does the same thing). The APK is written to `android/app/build/outputs/apk/release/app-release.apk`. With a device or emulator connected, `npm run android:local:install` builds and installs it directly.
+
+Local-release APKs are deliberately marked by the build output as debug-certificate artifacts. They are suitable for local installation only and must not be uploaded to an app store. `npm run android:production:apk` and `npm run android:release:bundle` continue to require a private release key.
+
+### Android signing and bundle
+
+Create an upload key outside source control, copy `android/keystore.properties.example` to `android/keystore.properties`, and replace every example value. Put the keystore at the path named by `storeFile`; both the properties file and `*.keystore` files are ignored by Git. Release tasks intentionally fail when a required value or keystore is missing.
+
+```bash
+cd android
+./gradlew clean assembleRelease bundleRelease
+cd ..
+
+# The signer must be the production upload certificate, never CN=Android Debug.
+$ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs android/app/build/outputs/apk/release/app-release.apk
+keytool -printcert -jarfile android/app/build/outputs/bundle/release/app-release.aab
+```
+
+The exact Build Tools directory may differ locally. Before upload, confirm both artifacts are version 1, are signed by the expected upload certificate, and do not report `CN=Android Debug`. Google Play Console access and the upload-key secret are external requirements.
+
+### iOS archive
+
+Install pods, select the `PowersOfZeroPOS` scheme in Xcode, choose `Any iOS Device (arm64)`, then use **Product → Archive**. Confirm version `1.0` and build `1`, validate the archive, and distribute it through the Organizer. An Apple Developer team, distribution certificate, App Store Connect record, and matching provisioning profile must be supplied outside this repository.
+
+An unsigned simulator compile can be used as a native smoke check:
+
+```bash
+xcodebuild -workspace ios/PowersOfZeroPOS.xcworkspace \
+  -scheme PowersOfZeroPOS -configuration Release \
+  -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO build
+```
+
+### Release checklist
+
+- Run `npm test`, `npx tsc --noEmit`, and `npm run lint`.
+- Exercise onboarding, activation, staff PIN lockout, checkout, and register locking on a clean install and an upgraded activated install.
+- Verify light/dark mode, larger text, reduced motion, VoiceOver/TalkBack, one small phone, one tall phone, and an iPad/tablet smoke test.
+- Confirm simulated readers and developer settings are absent from the release UI.
+- Confirm production API, Stripe, Apple, and Google credentials are provided by the release environment and are not committed.
+
 ## Why This Exists
 
 - Clean React Native architecture with separate config, service, terminal, and state layers

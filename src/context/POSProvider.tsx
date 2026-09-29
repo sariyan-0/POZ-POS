@@ -33,10 +33,11 @@ import {
 import { initialPOSState } from '../services/mockData';
 import { loadPOSState, savePOSState } from '../storage/persistence';
 import { createId, createTransactionReference } from '../utils/id';
+import { capMoneyAmountInCents } from '../utils/money';
 import { createPinCredentials, verifyPin } from '../utils/pin';
 import { calculateCartTotals } from '../utils/tax';
 import { fetchCatalog } from '../services/api/catalog';
-import { fetchStaff } from '../services/api/staff';
+import { fetchStaff, verifyStaffPin } from '../services/api/staff';
 import { fetchCustomers } from '../services/api/customers';
 
 const isTestRuntime =
@@ -64,6 +65,7 @@ type POSContextValue = {
   modifierSets: ModifierSet[];
   currentStaff?: StaffMember;
   isStaffAuthenticated: boolean;
+  hasPinEnabledStaff: boolean;
   saleItemCount: number;
   subtotal: number;
   tax: number;
@@ -109,12 +111,12 @@ type POSContextValue = {
   deleteTaxDefinition: (taxId: string) => void;
   updateBusinessName: (name: string) => void;
   updateAppearanceMode: (mode: AppearanceMode) => void;
-  unlockWithPin: (pin: string, staffId?: string) => StaffMember | null;
-  authorizeManagerPin: (pin: string) => StaffMember | null;
+  unlockWithPin: (pin: string, staffId?: string) => Promise<StaffMember | null>;
+  authorizeManagerPin: (pin: string) => Promise<StaffMember | null>;
   authorizePermissionPin: (
     pin: string,
     permission: StaffPermission,
-  ) => StaffMember | null;
+  ) => Promise<StaffMember | null>;
   hasPermission: (permission: StaffPermission, staff?: StaffMember) => boolean;
   lockSession: () => void;
   updateCurrentStaffPin: (
@@ -230,9 +232,55 @@ type POSAction =
 const POSContext = createContext<POSContextValue | undefined>(undefined);
 
 function hasConfiguredPin(
-  staffMember: Pick<StaffMember, 'pinHash' | 'pinSalt'>,
+  staffMember: Pick<StaffMember, 'pinHash' | 'pinSalt' | 'pinSet'>,
 ) {
-  return !!staffMember.pinHash?.trim() && !!staffMember.pinSalt?.trim();
+  return (
+    staffMember.pinSet === true ||
+    (!!staffMember.pinHash?.trim() && !!staffMember.pinSalt?.trim())
+  );
+}
+
+export function findStaffForPin(
+  staffMembers: StaffMember[],
+  pin: string,
+  staffId?: string,
+) {
+  return (
+    staffMembers.find(staffMember => {
+      if (!staffMember.active || !hasConfiguredPin(staffMember)) return false;
+      if (staffId && staffMember.id !== staffId) return false;
+      return verifyPin({
+        pin,
+        pinHash: staffMember.pinHash,
+        pinSalt: staffMember.pinSalt,
+      });
+    }) ?? null
+  );
+}
+
+export function preserveAuthenticatedStaffId(
+  currentStaffId: string | undefined,
+  staffMembers: StaffMember[],
+) {
+  return staffMembers.some(
+    member =>
+      member.active && hasConfiguredPin(member) && member.id === currentStaffId,
+  )
+    ? currentStaffId
+    : undefined;
+}
+
+export function getImplicitOwnerSession(
+  staffMembers: StaffMember[],
+  staffSyncStatus: 'idle' | 'syncing' | 'synced' | 'error',
+) {
+  const activeStaff = staffMembers.filter(member => member.active);
+  return staffSyncStatus === 'synced' &&
+    activeStaff.length === 1 &&
+    activeStaff[0].role === 'owner' &&
+    !hasConfiguredPin(activeStaff[0])
+    ? activeStaff[0]
+    : undefined;
 }
 
 const DEFAULT_STAFF_PERMISSIONS: Record<
@@ -444,7 +492,7 @@ function clearLegacyDefaultOwnerPin(staffMember: StaffMember): StaffMember {
   return staffMember;
 }
 
-function normalizeState(state: POSState): POSState {
+export function normalizeState(state: POSState): POSState {
   const rawCart = (state.cart ?? []) as Array<
     CartItem | { productId?: string; quantity?: number }
   >;
@@ -457,14 +505,6 @@ function normalizeState(state: POSState): POSState {
     : initialPOSState.staffMembers
         .map(staffMember => normalizeStaffMember(staffMember))
         .map(staffMember => clearLegacyDefaultOwnerPin(staffMember));
-  const hasAnyConfiguredPins = normalizedStaffMembers.some(
-    staffMember => staffMember.active && hasConfiguredPin(staffMember),
-  );
-  const fallbackStaffId =
-    normalizedStaffMembers.find(
-      staffMember => staffMember.active && staffMember.role === 'owner',
-    )?.id ?? normalizedStaffMembers.find(staffMember => staffMember.active)?.id;
-
   return {
     ...state,
     products: (state.products ?? []).map(product =>
@@ -480,12 +520,9 @@ function normalizeState(state: POSState): POSState {
       normalizeCustomer(customer),
     ),
     staffMembers: normalizedStaffMembers,
-    currentStaffId:
-      typeof state.currentStaffId === 'string' && state.currentStaffId
-        ? state.currentStaffId
-        : hasAnyConfiguredPins
-        ? undefined
-        : fallbackStaffId,
+    // Staff authentication is a runtime session. Never restore a previous
+    // operator after a cold launch, even when older state persisted the ID.
+    currentStaffId: undefined,
     currentCustomerId:
       typeof state.currentCustomerId === 'string'
         ? state.currentCustomerId
@@ -668,7 +705,10 @@ function posReducer(state: POSState, action: POSAction): POSState {
       };
     }
     case 'addCustomAmountToCart': {
-      if (action.payload.amountInCents <= 0) {
+      const amountInCents = capMoneyAmountInCents(
+        action.payload.amountInCents,
+      );
+      if (amountInCents <= 0) {
         return state;
       }
 
@@ -681,7 +721,7 @@ function posReducer(state: POSState, action: POSAction): POSState {
             type: 'custom',
             title: 'Custom amount',
             quantity: 1,
-            unitPriceInCents: action.payload.amountInCents,
+            unitPriceInCents: amountInCents,
             taxable: true,
             note: action.payload.note?.trim() || undefined,
           },
@@ -1051,15 +1091,18 @@ function posReducer(state: POSState, action: POSAction): POSState {
       };
     }
     case 'reconcileStaff': {
-      const staff = action.payload.staff.map(normalizeStaffMember);
+      const staff = action.payload.staff.length
+        ? action.payload.staff.map(normalizeStaffMember)
+        : initialPOSState.staffMembers
+            .map(normalizeStaffMember)
+            .map(clearLegacyDefaultOwnerPin);
       return {
         ...state,
         staffMembers: staff,
-        currentStaffId: staff.some(
-          member => member.active && member.id === state.currentStaffId,
-        )
-          ? state.currentStaffId
-          : undefined,
+        currentStaffId: preserveAuthenticatedStaffId(
+          state.currentStaffId,
+          staff,
+        ),
       };
     }
     case 'reconcileCustomers': {
@@ -1263,20 +1306,22 @@ export function POSProvider({ children }: PropsWithChildren) {
   const currentStaff = useMemo(() => {
     if (state.currentStaffId) {
       return state.staffMembers.find(
-        staffMember => staffMember.id === state.currentStaffId,
+        staffMember =>
+          staffMember.id === state.currentStaffId &&
+          staffMember.active &&
+          hasConfiguredPin(staffMember),
       );
     }
 
-    const activeStaffWithoutPins = state.staffMembers.filter(
-      staffMember => staffMember.active && !hasConfiguredPin(staffMember),
-    );
-
-    return (
-      activeStaffWithoutPins.find(
-        staffMember => staffMember.role === 'owner',
-      ) ?? activeStaffWithoutPins[0]
-    );
-  }, [state.currentStaffId, state.staffMembers]);
+    return getImplicitOwnerSession(state.staffMembers, staffSyncStatus);
+  }, [staffSyncStatus, state.currentStaffId, state.staffMembers]);
+  const hasPinEnabledStaff = useMemo(
+    () =>
+      state.staffMembers.some(
+        staffMember => staffMember.active && hasConfiguredPin(staffMember),
+      ),
+    [state.staffMembers],
+  );
 
   const value = useMemo<POSContextValue>(() => {
     return {
@@ -1290,6 +1335,7 @@ export function POSProvider({ children }: PropsWithChildren) {
       ),
       currentStaff,
       isStaffAuthenticated: !!currentStaff,
+      hasPinEnabledStaff,
       saleItemCount,
       subtotal,
       tax,
@@ -1473,8 +1519,8 @@ export function POSProvider({ children }: PropsWithChildren) {
             },
           },
         }),
-      upsertTaxDefinition: tax =>
-        dispatch({ type: 'upsertTaxDefinition', payload: tax }),
+      upsertTaxDefinition: taxDefinition =>
+        dispatch({ type: 'upsertTaxDefinition', payload: taxDefinition }),
       deleteTaxDefinition: taxId =>
         dispatch({ type: 'deleteTaxDefinition', payload: { taxId } }),
       updateBusinessName: name =>
@@ -1496,23 +1542,12 @@ export function POSProvider({ children }: PropsWithChildren) {
             appearanceMode: mode,
           },
         }),
-      unlockWithPin: (pin, staffId) => {
-        const matchedStaff = state.staffMembers.find(staffMember => {
-          if (!staffMember.active) {
-            return false;
-          }
-          if (!hasConfiguredPin(staffMember)) {
-            return false;
-          }
-          if (staffId && staffMember.id !== staffId) {
-            return false;
-          }
-          return verifyPin({
-            pin,
-            pinHash: staffMember.pinHash,
-            pinSalt: staffMember.pinSalt,
-          });
-        });
+      unlockWithPin: async (pin, staffId) => {
+        const localMatch = findStaffForPin(state.staffMembers, pin, staffId);
+        const matchedStaff = localMatch ?? (await verifyStaffPin(pin));
+        if (staffId && matchedStaff.id !== staffId) {
+          return null;
+        }
         if (!matchedStaff) {
           return null;
         }
@@ -1522,33 +1557,20 @@ export function POSProvider({ children }: PropsWithChildren) {
         });
         return matchedStaff;
       },
-      authorizeManagerPin: pin => {
-        const matchedStaff = state.staffMembers.find(staffMember => {
-          if (!staffHasPermission(staffMember, 'issue_refunds')) {
-            return false;
-          }
-          if (!hasConfiguredPin(staffMember)) {
-            return false;
-          }
-          return verifyPin({
-            pin,
-            pinHash: staffMember.pinHash,
-            pinSalt: staffMember.pinSalt,
-          });
-        });
-        return matchedStaff ?? null;
+      authorizeManagerPin: async pin => {
+        const localMatch = findStaffForPin(state.staffMembers, pin);
+        const matchedStaff = localMatch ?? (await verifyStaffPin(pin));
+        return staffHasPermission(matchedStaff, 'issue_refunds')
+          ? matchedStaff
+          : null;
       },
-      authorizePermissionPin: (pin, permission) =>
-        state.staffMembers.find(
-          staffMember =>
-            staffHasPermission(staffMember, permission) &&
-            hasConfiguredPin(staffMember) &&
-            verifyPin({
-              pin,
-              pinHash: staffMember.pinHash,
-              pinSalt: staffMember.pinSalt,
-            }),
-        ) ?? null,
+      authorizePermissionPin: async (pin, permission) => {
+        const localMatch = findStaffForPin(state.staffMembers, pin);
+        const matchedStaff = localMatch ?? (await verifyStaffPin(pin));
+        return staffHasPermission(matchedStaff, permission)
+          ? matchedStaff
+          : null;
+      },
       hasPermission: (permission, staffMember = currentStaff) =>
         staffHasPermission(staffMember, permission),
       lockSession: () => dispatch({ type: 'lockSession' }),
@@ -1703,6 +1725,7 @@ export function POSProvider({ children }: PropsWithChildren) {
     };
   }, [
     currentStaff,
+    hasPinEnabledStaff,
     catalogSyncError,
     catalogSyncStatus,
     isHydrated,

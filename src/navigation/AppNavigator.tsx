@@ -19,6 +19,7 @@ import { CheckoutDiscountsScreen } from '../screens/CheckoutDiscountsScreen';
 import { MoreScreen } from '../screens/MoreScreen';
 import { CurrentSaleScreen } from '../screens/CurrentSaleScreen';
 import { AddModifiersScreen } from '../screens/AddModifiersScreen';
+import { OnboardingScreen } from '../screens/OnboardingScreen';
 import {
   ProtectedAllItems,
   ProtectedBackend,
@@ -60,6 +61,7 @@ export type RootStackParamList = {
   AddModifiers: undefined;
   MoreSection: { section: 'hardware' | 'taxes' | 'appearance' | 'developer' };
   TransactionDetail: { transactionId: string };
+  OnboardingTour: undefined;
 };
 
 export type MainTabParamList = {
@@ -72,6 +74,19 @@ export type MainTabParamList = {
 
 const Tab = createBottomTabNavigator<MainTabParamList>();
 const Stack = createNativeStackNavigator<RootStackParamList>();
+
+function OnboardingReplayScreen() {
+  const navigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+
+  return (
+    <OnboardingScreen
+      mode="replay"
+      onComplete={() => navigation.goBack()}
+      onClose={() => navigation.goBack()}
+    />
+  );
+}
 
 function MainTabs() {
   const theme = useAppTheme();
@@ -104,66 +119,62 @@ function MainTabs() {
       <Tab.Screen
         name="Checkout"
         component={ProtectedCheckout}
-        options={{
-          tabBarIcon: ({ color, size }) => (
-            <MaterialDesignIcons
-              color={color}
-              name="view-grid-outline"
-              size={size}
-            />
-          ),
-        }}
+        options={{ tabBarIcon: CheckoutTabIcon }}
       />
       <Tab.Screen
         name="Transactions"
         component={ProtectedTransactions}
-        options={{
-          tabBarIcon: ({ color, size }) => (
-            <MaterialDesignIcons
-              color={color}
-              name="swap-horizontal"
-              size={size}
-            />
-          ),
-        }}
+        options={{ tabBarIcon: TransactionsTabIcon }}
       />
       <Tab.Screen
         name="Money"
         component={ProtectedMoney}
-        options={{
-          tabBarIcon: ({ color, size }) => (
-            <MaterialDesignIcons
-              color={color}
-              name="cash-multiple"
-              size={size}
-            />
-          ),
-        }}
+        options={{ tabBarIcon: MoneyTabIcon }}
       />
       <Tab.Screen
         name="Orders"
         component={ProtectedOrders}
-        options={{
-          tabBarIcon: ({ color, size }) => (
-            <MaterialDesignIcons
-              color={color}
-              name="receipt-text-outline"
-              size={size}
-            />
-          ),
-        }}
+        options={{ tabBarIcon: OrdersTabIcon }}
       />
       <Tab.Screen
         name="More"
         component={MoreScreen}
-        options={{
-          tabBarIcon: ({ color, size }) => (
-            <MaterialDesignIcons color={color} name="menu" size={size} />
-          ),
-        }}
+        options={{ tabBarIcon: MoreTabIcon }}
       />
     </Tab.Navigator>
   );
+}
+
+type TabIconProps = { color: string; size: number };
+
+function CheckoutTabIcon({ color, size }: TabIconProps) {
+  return (
+    <MaterialDesignIcons color={color} name="view-grid-outline" size={size} />
+  );
+}
+
+function TransactionsTabIcon({ color, size }: TabIconProps) {
+  return (
+    <MaterialDesignIcons color={color} name="swap-horizontal" size={size} />
+  );
+}
+
+function MoneyTabIcon({ color, size }: TabIconProps) {
+  return <MaterialDesignIcons color={color} name="cash-multiple" size={size} />;
+}
+
+function OrdersTabIcon({ color, size }: TabIconProps) {
+  return (
+    <MaterialDesignIcons
+      color={color}
+      name="receipt-text-outline"
+      size={size}
+    />
+  );
+}
+
+function MoreTabIcon({ color, size }: TabIconProps) {
+  return <MaterialDesignIcons color={color} name="menu" size={size} />;
 }
 
 export function AppNavigator() {
@@ -172,6 +183,7 @@ export function AppNavigator() {
   return (
     <NavigationContainer theme={theme.navigationTheme}>
       <Stack.Navigator
+        initialRouteName="MainTabs"
         screenOptions={{
           headerTintColor: theme.colors.text,
           headerStyle: {
@@ -183,6 +195,11 @@ export function AppNavigator() {
           },
         }}
       >
+        <Stack.Screen
+          name="OnboardingTour"
+          component={OnboardingReplayScreen}
+          options={{ headerShown: false, animation: 'fade' }}
+        />
         <Stack.Screen
           name="MainTabs"
           component={MainTabs}

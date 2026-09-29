@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="oneregister_splash_background">#F3F6F2</color>
+    <color name="oneregister_launcher_background">#0C2419</color>
 </resources>

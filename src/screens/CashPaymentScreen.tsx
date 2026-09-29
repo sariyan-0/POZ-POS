@@ -17,6 +17,7 @@ import { recordTransaction } from '../services/api/transactions';
 import { useAppTheme } from '../theme';
 import { formatCurrency } from '../utils/format';
 import { createId } from '../utils/id';
+import { appendMoneyDigits, MAX_MONEY_AMOUNT_IN_CENTS } from '../utils/money';
 import { feedback } from '../services/feedback';
 
 const KEYS = [
@@ -74,7 +75,9 @@ export function CashPaymentScreen() {
       10000,
     ];
     return [...new Set(candidates)]
-      .filter(amount => amount >= total)
+      .filter(
+        amount => amount >= total && amount <= MAX_MONEY_AMOUNT_IN_CENTS,
+      )
       .sort((a, b) => a - b)
       .slice(0, 5);
   }, [total]);
@@ -101,7 +104,7 @@ export function CashPaymentScreen() {
       setDigits(current => current.slice(0, -1));
       return;
     }
-    setDigits(current => `${current}${key}`.replace(/^0+/, '').slice(0, 8));
+    setDigits(current => appendMoneyDigits(current, key));
   }
 
   async function confirmCashPayment() {

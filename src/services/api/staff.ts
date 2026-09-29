@@ -2,6 +2,20 @@ import { apiConfig } from '../../config/api';
 import { StaffMember, StaffPermission } from '../../models/pos';
 import { apiClient } from './ApiClient';
 
+type VerifyStaffPinResponse = {
+  success: true;
+  data: {
+    staff: {
+      id: string;
+      name: string;
+      role: StaffMember['role'];
+      permissions: StaffPermission[];
+    };
+    staffToken: string;
+    expiresIn: number;
+  };
+};
+
 const permissions = new Set<StaffPermission>([
   'process_sales', 'view_transactions', 'apply_discounts', 'issue_refunds',
   'manage_customers', 'manage_catalog', 'manage_inventory', 'view_reports',
@@ -25,8 +39,40 @@ export async function fetchStaff(): Promise<{ staff: StaffMember[]; syncedAt: st
       permissions: Array.isArray(entry.permissions) ? entry.permissions.filter((permission): permission is StaffPermission => typeof permission === 'string' && permissions.has(permission as StaffPermission)) : [],
       pinHash: typeof entry.pinHash === 'string' ? entry.pinHash : '',
       pinSalt: typeof entry.pinSalt === 'string' ? entry.pinSalt : '',
+      ...(typeof entry.pinSet === 'boolean' ? { pinSet: entry.pinSet } : {}),
       active: entry.active === true,
     }];
   });
   return { staff, syncedAt: typeof data.syncedAt === 'string' ? data.syncedAt : new Date().toISOString() };
+}
+
+export async function verifyStaffPin(pin: string): Promise<StaffMember> {
+  const payload = await apiClient.post<VerifyStaffPinResponse>(
+    apiConfig.endpoints.verifyStaffPin,
+    { pin },
+    { timeoutMs: 10000 },
+  );
+  const staff = payload?.data?.staff;
+  if (
+    payload?.success !== true ||
+    !staff ||
+    typeof staff.id !== 'string' ||
+    typeof staff.name !== 'string' ||
+    !['owner', 'manager', 'cashier'].includes(staff.role)
+  ) {
+    throw new Error('Invalid staff verification response');
+  }
+
+  return {
+    id: staff.id,
+    name: staff.name,
+    role: staff.role,
+    permissions: Array.isArray(staff.permissions)
+      ? staff.permissions.filter(permission => permissions.has(permission))
+      : [],
+    pinHash: '',
+    pinSalt: '',
+    pinSet: true,
+    active: true,
+  };
 }

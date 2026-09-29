@@ -15,11 +15,15 @@ export interface TerminalConfiguration {
   preferredDiscoveryMethod: 'bluetoothScan' | 'internet' | 'tapToPay' | '';
 }
 
+const DEFAULT_READER_MODE: TerminalConfiguration['readerMode'] = __DEV__
+  ? 'simulated'
+  : 'bluetooth';
+
 const DEFAULT_TERMINAL_CONFIGURATION: TerminalConfiguration = {
   locationId: '',
   locationDisplayName: '',
   locationAddressSummary: '',
-  readerMode: 'simulated',
+  readerMode: DEFAULT_READER_MODE,
   preferredReaderId: '',
   preferredReaderSerialNumber: '',
   preferredReaderLabel: '',
@@ -68,11 +72,12 @@ class TerminalConfigService {
             ? parsed.locationAddressSummary.trim()
             : '',
         readerMode:
+          (__DEV__ && parsed.readerMode === 'simulated') ||
           parsed.readerMode === 'bluetooth' ||
           parsed.readerMode === 'internet' ||
           parsed.readerMode === 'tap_to_pay'
             ? parsed.readerMode
-            : 'simulated',
+            : DEFAULT_READER_MODE,
         preferredReaderId:
           typeof parsed.preferredReaderId === 'string'
             ? parsed.preferredReaderId.trim()
@@ -106,7 +111,10 @@ class TerminalConfigService {
       locationId: config.locationId.trim(),
       locationDisplayName: config.locationDisplayName.trim(),
       locationAddressSummary: config.locationAddressSummary.trim(),
-      readerMode: config.readerMode,
+      readerMode:
+        !__DEV__ && config.readerMode === 'simulated'
+          ? DEFAULT_READER_MODE
+          : config.readerMode,
       preferredReaderId: config.preferredReaderId.trim(),
       preferredReaderSerialNumber: config.preferredReaderSerialNumber.trim(),
       preferredReaderLabel: config.preferredReaderLabel.trim(),
