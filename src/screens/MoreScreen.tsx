@@ -48,7 +48,11 @@ export function MoreScreen() {
               { color: theme.colors.accentText },
             ]}
           >
-            {error ? 'REGISTER OFFLINE' : isChecking ? 'CHECKING CONNECTION' : 'REGISTER ONLINE'}
+            {error
+              ? 'REGISTER OFFLINE'
+              : isChecking
+              ? 'CHECKING CONNECTION'
+              : 'REGISTER ONLINE'}
           </Text>
           <Text
             style={[styles.connectionTitle, { color: theme.colors.accentText }]}
@@ -105,6 +109,11 @@ export function MoreScreen() {
         ]}
       >
         <ListRow
+          label="Register location"
+          icon="map-marker-outline"
+          onPress={() => navigation.navigate('Locations')}
+        />
+        <ListRow
           label="Readers"
           icon="credit-card-wireless-outline"
           onPress={() =>
@@ -114,9 +123,7 @@ export function MoreScreen() {
         <ListRow
           label="Taxes"
           icon="percent-outline"
-          onPress={() =>
-            navigation.navigate('Taxes')
-          }
+          onPress={() => navigation.navigate('Taxes')}
         />
       </View>
 

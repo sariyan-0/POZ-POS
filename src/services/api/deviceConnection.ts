@@ -9,7 +9,12 @@ import { apiClient, HttpResponseError } from './ApiClient';
 import { authCredentialStore } from './AuthCredentialStore';
 
 const connectionListeners = new Set<() => void>();
-export function subscribeDeviceConnection(listener: () => void) { connectionListeners.add(listener); return () => { connectionListeners.delete(listener); }; }
+export function subscribeDeviceConnection(listener: () => void) {
+  connectionListeners.add(listener);
+  return () => {
+    connectionListeners.delete(listener);
+  };
+}
 const INSTALLATION_ID_KEY = 'oneregister/device-installation-id/v1';
 const CONNECTION_CACHE_KEY = 'oneregister/device-connection/v1';
 
@@ -19,6 +24,7 @@ export type ConnectedDevice = {
     name: string;
     platform: string;
     lastSeenAt?: string | null;
+    locationId?: string | null;
   };
   business: { id: string; name: string; stripeConnected: boolean };
 };

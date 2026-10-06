@@ -14,6 +14,7 @@ import {
 } from '@react-navigation/native-stack';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons/static';
 import { useAppTheme } from '../theme';
+import { LocationsScreen } from '../screens/LocationsScreen';
 import { TaxesScreen } from '../screens/TaxesScreen';
 import { MockPaymentScreen } from '../screens/MockPaymentScreen';
 import { CheckoutDiscountsScreen } from '../screens/CheckoutDiscountsScreen';
@@ -53,6 +54,7 @@ export type RootStackParamList = {
   CheckoutDiscounts: undefined;
   Items: undefined;
   Taxes: undefined;
+  Locations: undefined;
   AllItems: undefined;
   Modifiers: undefined;
   ModifierSetEditor: { modifierSetId?: string } | undefined;
@@ -179,11 +181,21 @@ function MoreTabIcon({ color, size }: TabIconProps) {
   return <MaterialDesignIcons color={color} name="menu" size={size} />;
 }
 
-export function AppNavigator({onLeavePayment}:{onLeavePayment?:()=>void}) {
+export function AppNavigator({
+  onLeavePayment,
+}: {
+  onLeavePayment?: () => void;
+}) {
   const theme = useAppTheme();
 
   return (
-    <NavigationContainer theme={theme.navigationTheme} onStateChange={state=>{if(state?.routes[state.index??0]?.name!=="MockPayment")onLeavePayment?.();}}>
+    <NavigationContainer
+      theme={theme.navigationTheme}
+      onStateChange={state => {
+        if (state?.routes[state.index ?? 0]?.name !== 'MockPayment')
+          onLeavePayment?.();
+      }}
+    >
       <Stack.Navigator
         initialRouteName="MainTabs"
         screenOptions={{
@@ -197,7 +209,16 @@ export function AppNavigator({onLeavePayment}:{onLeavePayment?:()=>void}) {
           },
         }}
       >
-        <Stack.Screen name="Taxes" component={TaxesScreen} options={{ headerShown: false }} />
+        <Stack.Screen
+          name="Locations"
+          component={LocationsScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="Taxes"
+          component={TaxesScreen}
+          options={{ headerShown: false }}
+        />
         <Stack.Screen
           name="OnboardingTour"
           component={OnboardingReplayScreen}

@@ -230,7 +230,11 @@ export interface Transaction {
   catalogRevision?: string;
   saleSnapshot?: import('@oneregister/commerce-core').SaleInput;
   authorization?: { staffToken: string; approvalToken?: string };
-  receipt?: { header?: string; footer?: string; taxRegistrationNumber?: string };
+  receipt?: {
+    header?: string;
+    footer?: string;
+    taxRegistrationNumber?: string;
+  };
   items: TransactionItem[];
 }
 
@@ -279,7 +283,7 @@ export interface AppSettings {
   business: BusinessSettings;
   hardware: HardwareSettings;
   appearanceMode: AppearanceMode;
-  mockPaymentMode: true;
+  mockPaymentMode: boolean;
 }
 
 export interface POSState {
