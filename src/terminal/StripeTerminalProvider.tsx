@@ -1171,9 +1171,9 @@ function StripeTerminalBootstrap({
       return;
     }
 
-    // A remembered nearby Bluetooth reader should not require the full manual
-    // scan window every time the app starts. Manual discovery still uses 10s.
-    await discoverReaders(currentConfig.readerMode === 'bluetooth' || currentConfig.readerMode === 'simulated' ? 5 : 10);
+    // Keep the full discovery window: some Bluetooth readers appear after five
+    // seconds, and a short automatic scan would silently skip reconnection.
+    await discoverReaders(10);
     const preferredReader = findPreferredReader(readersRef.current);
     if (!preferredReader) {
       setReaderConnectionMessage(null);

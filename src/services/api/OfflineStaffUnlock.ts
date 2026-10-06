@@ -7,6 +7,18 @@ import { staffSession } from './StaffSession';
 
 const service = 'com.sariyan0.oneregister.staff-unlock.v2';
 const legacyService = 'com.sariyan0.oneregister.staff-unlock.v1';
+export class OfflinePinLockedError extends Error {
+  constructor(readonly retryAfterMs: number) {
+    super(`Too many PIN attempts. Try again in ${Math.ceil(retryAfterMs / 60000)} minutes.`);
+    this.name = 'OfflinePinLockedError';
+  }
+}
+export class OfflinePinInvalidError extends Error {
+  constructor() {
+    super('That PIN was not recognized. Try again.');
+    this.name = 'OfflinePinInvalidError';
+  }
+}
 type Entry = { staff: StaffMember; token: string; expiresAt: number; offlineToken: string; offlineExpiresAt: number; verifier: string };
 type Cache = { scope: string; entries: Entry[]; failures: number; lockedUntil: number; lastSeen: number };
 let work: Promise<unknown> = Promise.resolve();
@@ -74,7 +86,7 @@ export const offlineStaffUnlock = {
         await write(cache);
         throw new Error('Connect to verify your PIN after the device clock changed.');
       }
-      if (cache.lockedUntil > now) throw new Error(`Too many PIN attempts. Try again in ${Math.ceil((cache.lockedUntil - now) / 60000)} minutes.`);
+      if (cache.lockedUntil > now) throw new OfflinePinLockedError(cache.lockedUntil - now);
       cache.lastSeen = now;
       cache.entries = cache.entries.filter(entry => entry.offlineExpiresAt > now && staff.some(person => person.active && version(person) === version(entry.staff)));
       // A new register has no enrolled PINs. Avoid a keychain write before
@@ -85,7 +97,11 @@ export const offlineStaffUnlock = {
         cache.failures += 1;
         if (cache.failures >= 5) { cache.lockedUntil = now + 15 * 60000; cache.failures = 0; }
         await write(cache);
-        if (cache.lockedUntil > now) throw new Error('Too many PIN attempts. Try again in 15 minutes.');
+        if (cache.lockedUntil > now) throw new OfflinePinLockedError(cache.lockedUntil - now);
+        const enrolledIds = new Set(cache.entries.map(value => value.staff.id));
+        if (staff.filter(person => person.active && person.pinSet).every(person => enrolledIds.has(person.id))) {
+          throw new OfflinePinInvalidError();
+        }
         return null;
       }
       cache.failures = 0;

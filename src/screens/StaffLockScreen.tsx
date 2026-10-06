@@ -16,9 +16,11 @@ import { EntryHeader } from '../components/EntryHeader';
 import { useDeviceConnection } from '../context/DeviceConnectionProvider';
 import { usePOS } from '../hooks/usePOS';
 import { useAppTheme } from '../theme';
+import { HttpResponseError } from '../services/api/ApiClient';
+import { OfflinePinInvalidError, OfflinePinLockedError } from '../services/api/OfflineStaffUnlock';
 
 export const MAX_PIN_ATTEMPTS = 5;
-export const PIN_LOCKOUT_MS = 30_000;
+export const PIN_LOCKOUT_MS = 15 * 60_000;
 export const STAFF_WELCOME_MESSAGES = [
   'Welcome back',
   'Good to see you',
@@ -44,6 +46,26 @@ export function getPinFailureResult(nextFailedAttempts: number, now: number) {
   return {
     failedAttempts: shouldLock ? 0 : nextFailedAttempts,
     lockedUntil: shouldLock ? now + PIN_LOCKOUT_MS : null,
+  };
+}
+
+export function classifyPinFailure(error: unknown):
+  | { kind: 'locked'; retryAfterMs: number }
+  | { kind: 'invalid' }
+  | { kind: 'connection'; message: string } {
+  if (error instanceof OfflinePinLockedError || (error instanceof HttpResponseError && error.status === 429 &&
+    (error.payload as { error?: { code?: string } } | null)?.error?.code === 'pin_locked')) {
+    return { kind: 'locked', retryAfterMs: Math.max(1000, error.retryAfterMs || PIN_LOCKOUT_MS) };
+  }
+  if (error instanceof OfflinePinInvalidError || (error instanceof HttpResponseError && error.status === 401 &&
+    (error.payload as { error?: { code?: string } } | null)?.error?.code === 'invalid_pin')) {
+    return { kind: 'invalid' };
+  }
+  return {
+    kind: 'connection',
+    message: error instanceof Error && error.message.startsWith('Connect to verify')
+      ? error.message
+      : 'Connect once to verify this PIN on this register, then it can unlock locally.',
   };
 }
 
@@ -73,6 +95,9 @@ export function StaffLockScreen() {
   const remainingLockSeconds = isLocked
     ? Math.max(1, Math.ceil((lockedUntil - now) / 1000))
     : 0;
+  const remainingLockText = remainingLockSeconds >= 60
+    ? `${Math.ceil(remainingLockSeconds / 60)}m`
+    : `${remainingLockSeconds}s`;
   const businessName =
     connection?.business.name ||
     state.settings.business.businessName ||
@@ -98,7 +123,7 @@ export function StaffLockScreen() {
     const failure = getPinFailureResult(nextFailedAttempts, Date.now());
     const willLock = failure.lockedUntil !== null;
     const announcement = willLock
-      ? 'Too many incorrect attempts. The register is locked for 30 seconds.'
+      ? 'Too many incorrect attempts. The register is locked for 15 minutes.'
       : message;
     setErrorText(message);
     setPin('');
@@ -161,12 +186,18 @@ export function StaffLockScreen() {
       setFailedAttempts(0);
       setLockedUntil(null);
     } catch (error) {
-      triggerPinError(
-        error instanceof Error && (error.message.startsWith('Too many PIN') || error.message.startsWith('Connect to verify'))
-          ? error.message
-          : 'Connect once to verify this PIN on this register, then it can unlock locally.',
-        failedAttempts + 1,
-      );
+      const failure = classifyPinFailure(error);
+      if (failure.kind === 'locked') {
+        setLockedUntil(Date.now() + failure.retryAfterMs);
+        setFailedAttempts(0);
+        setPin('');
+        setErrorText('Too many incorrect PIN attempts. Try again when the lock ends.');
+      } else if (failure.kind === 'invalid') {
+        triggerPinError('That PIN was not recognized. Try again.', failedAttempts + 1);
+      } else {
+        setPin('');
+        setErrorText(failure.message);
+      }
     } finally {
       setIsVerifying(false);
     }
@@ -296,7 +327,7 @@ export function StaffLockScreen() {
   }
 
   const statusText = isLocked
-    ? `Too many tries. Try again in ${remainingLockSeconds}s.`
+    ? `Too many tries. Try again in ${remainingLockText}.`
     : errorText || 'Enter all four digits to unlock.';
 
   return (

@@ -6,6 +6,7 @@ import {
   disconnectCurrentDevice,
   loadCachedDeviceConnection,
   loadCurrentDevice,
+  StaleDeviceCredentialError,
 } from '../services/api/deviceConnection';
 import { authCredentialStore } from '../services/api/AuthCredentialStore';
 
@@ -49,7 +50,8 @@ export function DeviceConnectionProvider({ children }: PropsWithChildren) {
         const current = await loadCurrentDevice(credential);
         setConnection(current);
         setHasStoredCredential(current !== null);
-      } catch {
+      } catch (cause) {
+        if (cause instanceof StaleDeviceCredentialError) return;
         const cached = await loadCachedDeviceConnection().catch(() => null);
         if (cached) setConnection(cached);
         setHasStoredCredential(credentialPresent || cached !== null);
@@ -67,6 +69,11 @@ export function DeviceConnectionProvider({ children }: PropsWithChildren) {
   }, []);
 
   useEffect(() => { refresh().catch(() => undefined); }, [refresh]);
+
+  useEffect(() => authCredentialStore.subscribe(() => {
+    const pending = refreshRequestRef.current;
+    if (pending) void pending.then(refresh, refresh).catch(() => undefined);
+  }), [refresh]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', nextState => {
@@ -88,6 +95,7 @@ export function DeviceConnectionProvider({ children }: PropsWithChildren) {
       setConnection(claimed);
       setHasStoredCredential(true);
       setError(null);
+      await refreshRequestRef.current?.catch(() => undefined);
       await refresh();
     },
     disconnect: async () => {

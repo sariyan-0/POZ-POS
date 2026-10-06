@@ -125,9 +125,8 @@ export function activationErrorMessage(error: HttpResponseError): string {
 }
 
 function isDeviceAuthorizationFailure(error: HttpResponseError) {
-  if (error.status === 401) return true;
   if (
-    error.status !== 403 ||
+    (error.status !== 401 && error.status !== 403) ||
     !error.payload ||
     typeof error.payload !== 'object'
   ) {
@@ -135,7 +134,14 @@ function isDeviceAuthorizationFailure(error: HttpResponseError) {
   }
 
   const payload = error.payload as { error?: { code?: unknown } };
-  return payload.error?.code === 'business_unavailable';
+  return (error.status === 401 && payload.error?.code === 'device_revoked') ||
+    (error.status === 403 && payload.error?.code === 'business_unavailable');
+}
+
+export class StaleDeviceCredentialError extends Error {
+  constructor() {
+    super('Device credential changed during refresh.');
+  }
 }
 
 export function readActivationPayload(input: unknown): {
@@ -302,14 +308,16 @@ export async function loadCurrentDevice(credential?: AuthCredential | null): Pro
       { authTokenOverride: token.token },
     );
     if (payload.success !== true) return null;
+    if ((await authCredentialStore.getCredential())?.token !== token.token) throw new StaleDeviceCredentialError();
     await saveCachedConnection(payload.data);
+    if ((await authCredentialStore.getCredential())?.token !== token.token) throw new StaleDeviceCredentialError();
     return payload.data;
   } catch (error) {
     if (
       error instanceof HttpResponseError &&
       isDeviceAuthorizationFailure(error)
     ) {
-      await authCredentialStore.resetCredential();
+      if (!(await authCredentialStore.resetCredentialIfMatches(token.token))) throw new StaleDeviceCredentialError();
       await clearCachedConnection();
       return null;
     }

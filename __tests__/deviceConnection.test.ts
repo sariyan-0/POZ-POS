@@ -11,8 +11,16 @@ import {
   readActivationPayload,
   resolveActivationServerUrl,
   verifyDeviceActivation,
+  loadCurrentDevice,
+  StaleDeviceCredentialError,
 } from '../src/services/api/deviceConnection';
-import { HttpResponseError } from '../src/services/api/ApiClient';
+import { apiClient, HttpResponseError } from '../src/services/api/ApiClient';
+import { authCredentialStore } from '../src/services/api/AuthCredentialStore';
+
+afterEach(async () => {
+  jest.restoreAllMocks();
+  await authCredentialStore.resetCredential();
+});
 
 describe('device activation payloads', () => {
   test('formats manual activation codes as they are entered', () => {
@@ -118,5 +126,44 @@ describe('device activation payloads', () => {
     expect(activationErrorMessage(error)).toBe(
       'That code is invalid, expired, or already used.',
     );
+  });
+});
+
+describe('connected device refresh', () => {
+  test('temporary server failure keeps the saved device credential', async () => {
+    await authCredentialStore.setCredential('saved-register-token');
+    jest.spyOn(apiClient, 'get').mockRejectedValueOnce(new HttpResponseError(503, {
+      error: { code: 'device_auth_unavailable' },
+    }));
+    await expect(loadCurrentDevice()).rejects.toMatchObject({ status: 503 });
+    expect((await authCredentialStore.getCredential())?.token).toBe('saved-register-token');
+  });
+
+  test('an explicit revocation clears the matching credential', async () => {
+    await authCredentialStore.setCredential('revoked-register-token');
+    jest.spyOn(apiClient, 'get').mockRejectedValueOnce(new HttpResponseError(401, {
+      error: { code: 'device_revoked' },
+    }));
+    await expect(loadCurrentDevice()).resolves.toBeNull();
+    expect(await authCredentialStore.getCredential()).toBeNull();
+  });
+
+  test('an old revoked response cannot clear a newly paired register', async () => {
+    await authCredentialStore.setCredential('old-register-token');
+    jest.spyOn(apiClient, 'get').mockImplementationOnce(async () => {
+      await authCredentialStore.setCredential('new-register-token');
+      throw new HttpResponseError(401, { error: { code: 'device_revoked' } });
+    });
+    await expect(loadCurrentDevice()).rejects.toBeInstanceOf(StaleDeviceCredentialError);
+    expect((await authCredentialStore.getCredential())?.token).toBe('new-register-token');
+  });
+
+  test('queued revocation cannot erase a newer device credential', async () => {
+    await authCredentialStore.setCredential('old-register-token');
+    const replacement = authCredentialStore.setCredential('new-register-token');
+    const reset = authCredentialStore.resetCredentialIfMatches('old-register-token');
+    await replacement;
+    await expect(reset).resolves.toBe(false);
+    expect((await authCredentialStore.getCredential())?.token).toBe('new-register-token');
   });
 });

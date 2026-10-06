@@ -1,5 +1,5 @@
 import * as Keychain from 'react-native-keychain';
-import { offlineStaffUnlock } from '../src/services/api/OfflineStaffUnlock';
+import { OfflinePinInvalidError, offlineStaffUnlock } from '../src/services/api/OfflineStaffUnlock';
 import { authCredentialStore } from '../src/services/api/AuthCredentialStore';
 import { staffSession } from '../src/services/api/StaffSession';
 import { storageScope } from '../src/storage/persistence';
@@ -88,12 +88,17 @@ test('does not reuse a cache for another merchant or device credential', async (
 
 test('wrong PIN lockout persists across session resets and blocks even a correct PIN for 15 minutes', async () => {
   await remember();
-  for (let attempt = 0; attempt < 4; attempt += 1) expect(await offlineStaffUnlock.unlock('0000', [person])).toBeNull();
+  for (let attempt = 0; attempt < 4; attempt += 1) await expect(offlineStaffUnlock.unlock('0000', [person])).rejects.toBeInstanceOf(OfflinePinInvalidError);
   await expect(offlineStaffUnlock.unlock('0000', [person])).rejects.toThrow('15 minutes');
   staffSession.clear();
   await expect(offlineStaffUnlock.unlock('7392', [person])).rejects.toThrow('Too many PIN');
   jest.mocked(Date.now).mockReturnValue(now + 15 * 60000);
   expect(await offlineStaffUnlock.unlock('7392', [person])).toEqual(person);
+});
+
+test('a new staff member can still verify online when their PIN is not enrolled locally', async () => {
+  await remember();
+  expect(await offlineStaffUnlock.unlock('2468', [person, manager])).toBeNull();
 });
 
 test('staff edits and revocation invalidate cached access and lock an active cached session', async () => {
