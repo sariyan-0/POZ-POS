@@ -4,13 +4,18 @@ import { authCredentialStore } from '../src/services/api/AuthCredentialStore';
 import { staffSession } from '../src/services/api/StaffSession';
 import { storageScope } from '../src/storage/persistence';
 import { StaffMember } from '../src/models/pos';
+import { sha256 } from '../src/utils/pin';
 
 jest.mock('../src/storage/persistence', () => ({ storageScope: jest.fn(async () => 'server|business|register') }));
-const service = 'com.sariyan0.oneregister.staff-unlock.v1';
+const service = 'com.sariyan0.oneregister.staff-unlock.v2';
+const legacyService = 'com.sariyan0.oneregister.staff-unlock.v1';
 const person: StaffMember = { id: 'cashier', name: 'Cashier', role: 'cashier', active: true, pinSet: true, pinHash: '', pinSalt: '', updatedAt: 'v1', permissions: ['process_sales'] };
+const manager: StaffMember = { id: 'manager', name: 'Manager', role: 'manager', active: true, pinSet: true, pinHash: '', pinSalt: '', updatedAt: 'v1', permissions: ['process_sales', 'apply_discounts'] };
 const now = 1800000000000;
 async function remember() {
-  staffSession.set('server-signed-token-with-random-signature', person.id, 8 * 3600);
+  staffSession.set('server-signed-token-with-random-signature', person.id, 8 * 3600, false, {
+    token: 'device-bound-offline-grant', expiresAt: now + 7 * 86400000,
+  });
   await offlineStaffUnlock.remember('7392', person);
   staffSession.clear();
 }
@@ -18,6 +23,7 @@ beforeEach(async () => {
   jest.spyOn(Date, 'now').mockReturnValue(now);
   jest.mocked(storageScope).mockResolvedValue('server|business|register');
   await Keychain.resetGenericPassword({ service });
+  await Keychain.resetGenericPassword({ service: legacyService });
   await authCredentialStore.setCredential('device-token');
   staffSession.clear();
 });
@@ -34,11 +40,41 @@ test('unlocks from secure storage after a session reset without persisting the P
   expect(staffSession.approval()).toBeNull();
 });
 
-test('requires online verification when expired', async () => {
+test('a returning PIN unlocks locally on a later offline shift using its scoped grant', async () => {
   await remember();
-  jest.mocked(Date.now).mockReturnValue(now + 8 * 3600000);
+  jest.mocked(Date.now).mockReturnValue(now + 2 * 86400000);
+  expect(await offlineStaffUnlock.unlock('7392', [person])).toEqual(person);
+  expect(staffSession.current()?.token).toBe('device-bound-offline-grant');
+  expect(staffSession.current()?.offline).toBe(true);
+  expect(staffSession.current()?.expiresAt).toBe(now + 2 * 86400000 + 8 * 3600000);
+  staffSession.clear();
+  jest.mocked(Date.now).mockReturnValue(now + 7 * 86400000);
   expect(await offlineStaffUnlock.unlock('7392', [person])).toBeNull();
   expect(staffSession.current()).toBeNull();
+});
+
+test('each staff member can enroll and unlock their own PIN on the same register', async () => {
+  await remember();
+  staffSession.set('manager-online-token', manager.id, 8 * 3600, false, {
+    token: 'manager-offline-grant', expiresAt: now + 7 * 86400000,
+  });
+  await offlineStaffUnlock.remember('2468', manager);
+  staffSession.clear();
+  jest.mocked(Date.now).mockReturnValue(now + 86400000);
+  expect(await offlineStaffUnlock.unlock('7392', [person, manager])).toEqual(person);
+  staffSession.clear();
+  expect(await offlineStaffUnlock.unlock('2468', [person, manager])).toEqual(manager);
+});
+
+test('older encrypted PIN cache still unlocks until its original expiry after an app update', async () => {
+  const token = 'older-online-token';
+  await Keychain.setGenericPassword('staff-unlock', JSON.stringify({
+    scope: sha256('server|business|register|device-token'), failures: 0, lockedUntil: 0, lastSeen: now,
+    entries: [{ staff: person, token, expiresAt: now + 8 * 3600000, verifier: sha256(`${token}:7392`) }],
+  }), { service: legacyService });
+  expect(await offlineStaffUnlock.unlock('7392', [person])).toEqual(person);
+  expect(staffSession.current()?.token).toBe(token);
+  expect(await Keychain.getGenericPassword({ service: legacyService })).toBe(false);
 });
 
 test('does not reuse a cache for another merchant or device credential', async () => {

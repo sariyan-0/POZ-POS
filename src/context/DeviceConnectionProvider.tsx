@@ -1,13 +1,13 @@
-import React, { PropsWithChildren, createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { PropsWithChildren, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import {
   ConnectedDevice,
   claimDevice,
   disconnectCurrentDevice,
-  hasStoredDeviceCredential,
   loadCachedDeviceConnection,
   loadCurrentDevice,
 } from '../services/api/deviceConnection';
+import { authCredentialStore } from '../services/api/AuthCredentialStore';
 
 type DeviceConnectionContextValue = {
   connection: ConnectedDevice | null;
@@ -26,33 +26,44 @@ export function DeviceConnectionProvider({ children }: PropsWithChildren) {
   const [hasStoredCredential, setHasStoredCredential] = useState<boolean | null>(null);
   const [isChecking, setIsChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const refreshRequestRef = useRef<Promise<void> | null>(null);
 
-  const refresh = useCallback(async () => {
-    setIsChecking(true);
-    setError(null);
-    let credentialPresent = false;
-    try {
-      const cached = await loadCachedDeviceConnection();
-      if (cached) setConnection(cached);
+  const refresh = useCallback((): Promise<void> => {
+    if (refreshRequestRef.current) return refreshRequestRef.current;
+    const request = (async () => {
+      setIsChecking(true);
+      setError(null);
+      let credentialPresent = false;
+      try {
+        const cached = await loadCachedDeviceConnection();
+        if (cached) setConnection(cached);
 
-      credentialPresent = await hasStoredDeviceCredential();
-      setHasStoredCredential(credentialPresent);
-      if (!credentialPresent) {
-        setConnection(null);
-        return;
+        const credential = await authCredentialStore.getCredential();
+        credentialPresent = credential !== null;
+        setHasStoredCredential(credentialPresent);
+        if (!credential) {
+          setConnection(null);
+          return;
+        }
+
+        const current = await loadCurrentDevice(credential);
+        setConnection(current);
+        setHasStoredCredential(current !== null);
+      } catch {
+        const cached = await loadCachedDeviceConnection().catch(() => null);
+        if (cached) setConnection(cached);
+        setHasStoredCredential(credentialPresent || cached !== null);
+        setError('This register cannot reach OneRegister. Check the internet connection, then retry.');
+      } finally {
+        setIsChecking(false);
       }
-
-      const current = await loadCurrentDevice();
-      setConnection(current);
-      setHasStoredCredential(current !== null);
-    } catch {
-      const cached = await loadCachedDeviceConnection().catch(() => null);
-      if (cached) setConnection(cached);
-      setHasStoredCredential(credentialPresent || cached !== null);
-      setError('This register cannot reach OneRegister. Check the internet connection, then retry.');
-    } finally {
-      setIsChecking(false);
-    }
+    })();
+    refreshRequestRef.current = request;
+    const clear = () => {
+      if (refreshRequestRef.current === request) refreshRequestRef.current = null;
+    };
+    void request.then(clear, clear);
+    return request;
   }, []);
 
   useEffect(() => { refresh().catch(() => undefined); }, [refresh]);

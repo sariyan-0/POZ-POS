@@ -14,6 +14,8 @@ type VerifyStaffPinResponse = {
     };
     staffToken: string;
     expiresIn: number;
+    offlineGrant?: string;
+    offlineExpiresIn?: number;
   };
 };
 
@@ -48,10 +50,10 @@ export async function fetchStaff(): Promise<{ staff: StaffMember[]; syncedAt: st
   return { staff, syncedAt: typeof data.syncedAt === 'string' ? data.syncedAt : new Date().toISOString() };
 }
 
-export async function verifyStaffPin(pin: string, asApproval = false): Promise<StaffMember> {
+export async function verifyStaffPin(pin: string, asApproval = false, expectedCurrentStaffId?: string): Promise<StaffMember> {
   const payload = await apiClient.post<VerifyStaffPinResponse>(
     apiConfig.endpoints.verifyStaffPin,
-    { pin },
+    { pin, enrollOffline: !asApproval },
     { timeoutMs: 10000 },
   );
   const staff = payload?.data?.staff;
@@ -67,7 +69,13 @@ export async function verifyStaffPin(pin: string, asApproval = false): Promise<S
     throw new Error('Invalid staff verification response');
   }
 
-  staffSession.set(payload.data.staffToken, staff.id, payload.data.expiresIn, asApproval);
+  const grant = !asApproval && typeof payload.data.offlineGrant === 'string' &&
+    typeof payload.data.offlineExpiresIn === 'number' && payload.data.offlineExpiresIn > 0
+    ? { token: payload.data.offlineGrant, expiresAt: Date.now() + payload.data.offlineExpiresIn * 1000 }
+    : undefined;
+  if (!expectedCurrentStaffId || (staff.id === expectedCurrentStaffId && staffSession.current()?.staffId === expectedCurrentStaffId)) {
+    staffSession.set(payload.data.staffToken, staff.id, payload.data.expiresIn, asApproval, grant);
+  }
   return {
     id: staff.id,
     name: staff.name,

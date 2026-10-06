@@ -31,19 +31,19 @@ import {
   TransactionItem,
 } from '../models/pos';
 import { initialPOSState } from '../services/mockData';
-import { commitSale, loadPaymentAttempts, loadPOSState, savePOSState, storageScope } from '../storage/persistence';
+import { commitSale, loadPOSState, savePOSState, storageScope } from '../storage/persistence';
 import { createId, createTransactionReference } from '../utils/id';
 import { setDisplayCurrency } from '../utils/format';
 import { capMoneyAmountInCents } from '../utils/money';
 import { createPinCredentials, verifyPin } from '../utils/pin';
 import { staffSession } from '../services/api/StaffSession';
 import { offlineStaffUnlock } from '../services/api/OfflineStaffUnlock';
-import { apiClient } from '../services/api/ApiClient';
+import { apiClient, HttpResponseError } from '../services/api/ApiClient';
 import { saveTax, saveDiscount, saveModifierSet, saveProduct, archiveProduct } from '../services/api/catalogMutations';
 import { calculateCartTotals, createSaleSnapshot } from '../utils/tax';
 import { fetchCatalog } from '../services/api/catalog';
 import { fetchStaff, verifyStaffPin } from '../services/api/staff';
-import { subscribeDeviceConnection } from '../services/api/deviceConnection';
+import { hasStoredDeviceCredential, subscribeDeviceConnection } from '../services/api/deviceConnection';
 import { flushTransactionOutbox } from '../services/transactionOutbox';
 import { fetchOrders } from '../services/api/orders';
 import { fetchCustomers } from '../services/api/customers';
@@ -1166,6 +1166,7 @@ function posReducer(state: POSState, action: POSAction): POSState {
 
 export function POSProvider({ children }: PropsWithChildren) {
   const scopeRef = useRef<string | null>(null);
+  const pinRefreshAtRef = useRef<Map<string, number>>(new Map());
   const [state, dispatch] = useReducer(posReducer, initialPOSState);
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -1315,11 +1316,14 @@ export function POSProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     if (!isHydrated || isTestRuntime) return;
     const refresh = () => {
-      syncCatalog().catch(() => undefined);
-      syncStaff().catch(() => undefined);
-      syncCustomers().catch(() => undefined);
-      if (staffSession.current()) fetchOrders().then(result=>dispatch({type:'mergeServerTransactions',payload:result.transactions})).catch(()=>undefined);
-      flushTransactionOutbox(sale => dispatch({ type: 'updateTransactionSync', payload: { transactionId: sale.id, update: sale } })).catch(() => undefined);
+      hasStoredDeviceCredential().then(connected => {
+        if (!connected) return;
+        syncCatalog().catch(() => undefined);
+        syncStaff().catch(() => undefined);
+        syncCustomers().catch(() => undefined);
+        if (staffSession.current()) fetchOrders().then(result=>dispatch({type:'mergeServerTransactions',payload:result.transactions})).catch(()=>undefined);
+        flushTransactionOutbox(sale => dispatch({ type: 'updateTransactionSync', payload: { transactionId: sale.id, update: sale } })).catch(() => undefined);
+      }).catch(() => undefined);
     };
     refresh();
     const unsubscribeSession = staffSession.subscribe(()=>{if(staffSession.current())refresh();});
@@ -1512,7 +1516,6 @@ export function POSProvider({ children }: PropsWithChildren) {
         paymentDetails,
         cashDetails,
       }) => {
-        if(paymentMethod==='cash' && (await loadPaymentAttempts()).length)throw new Error('Recover the saved card payment before taking cash.');
         const saleState = frozenState ?? state;
         const saleTotals = calculateCartTotals(saleState);
         const saleCustomer = frozenState ? frozenState.customers.find(customer=>customer.id===frozenState.currentCustomerId) : selectedCustomer;
@@ -1622,16 +1625,42 @@ export function POSProvider({ children }: PropsWithChildren) {
         const cachedMatch = localMatch ? null : await offlineStaffUnlock.unlock(pin, state.staffMembers, staffId);
         const matchedStaff = localMatch ?? cachedMatch ?? (await verifyStaffPin(pin));
         if (scope !== await storageScope()) { staffSession.clear(); return null; }
+        if (!matchedStaff) {
+          return null;
+        }
         if (staffId && matchedStaff.id !== staffId) {
           staffSession.clear();
           return null;
         }
-        if (!matchedStaff) {
-          return null;
-        }
         if (!localMatch && !cachedMatch) {
           const known = state.staffMembers.find(person => person.id === matchedStaff.id);
-          await offlineStaffUnlock.remember(pin, { ...matchedStaff, updatedAt: known?.updatedAt }).catch(() => undefined);
+          // Secure enrollment continues after the verified session opens. The
+          // first online sign-in need not wait for another keychain round trip.
+          void offlineStaffUnlock.remember(pin, { ...matchedStaff, updatedAt: known?.updatedAt }).catch(() => undefined);
+        }
+        if (cachedMatch && staffSession.current()?.offline) {
+          // Local unlock completes immediately; refresh online authorization in
+          // the background so card and other server-backed actions can resume.
+          const lastAttempt = pinRefreshAtRef.current.get(cachedMatch.id) ?? 0;
+          if (Date.now() - lastAttempt >= 5 * 60_000) {
+            pinRefreshAtRef.current.set(cachedMatch.id, Date.now());
+            verifyStaffPin(pin, false, cachedMatch.id).then(async refreshed => {
+              if (refreshed.id !== cachedMatch.id) {
+                await offlineStaffUnlock.forget(cachedMatch.id);
+                dispatch({ type: 'lockSession' });
+                return;
+              }
+              if (staffSession.current()?.staffId === cachedMatch.id && !staffSession.current()?.offline) {
+                const known = stateRef.current.staffMembers.find(person => person.id === refreshed.id);
+                await offlineStaffUnlock.remember(pin, { ...refreshed, updatedAt: known?.updatedAt });
+              }
+            }).catch(async error => {
+              if (error instanceof HttpResponseError && (error.status === 401 || error.status === 403)) {
+                await offlineStaffUnlock.forget(cachedMatch.id).catch(() => undefined);
+                dispatch({ type: 'lockSession' });
+              }
+            });
+          }
         }
         dispatch({
           type: 'unlockWithPin',

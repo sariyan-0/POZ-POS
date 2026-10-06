@@ -164,7 +164,7 @@ export function StaffLockScreen() {
       triggerPinError(
         error instanceof Error && (error.message.startsWith('Too many PIN') || error.message.startsWith('Connect to verify'))
           ? error.message
-          : 'Connect to sign in, or use a PIN verified online during this shift.',
+          : 'Connect once to verify this PIN on this register, then it can unlock locally.',
         failedAttempts + 1,
       );
     } finally {

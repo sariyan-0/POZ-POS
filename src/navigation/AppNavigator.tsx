@@ -181,21 +181,11 @@ function MoreTabIcon({ color, size }: TabIconProps) {
   return <MaterialDesignIcons color={color} name="menu" size={size} />;
 }
 
-export function AppNavigator({
-  onLeavePayment,
-}: {
-  onLeavePayment?: () => void;
-}) {
+export function AppNavigator() {
   const theme = useAppTheme();
 
   return (
-    <NavigationContainer
-      theme={theme.navigationTheme}
-      onStateChange={state => {
-        if (state?.routes[state.index ?? 0]?.name !== 'MockPayment')
-          onLeavePayment?.();
-      }}
-    >
+    <NavigationContainer theme={theme.navigationTheme}>
       <Stack.Navigator
         initialRouteName="MainTabs"
         screenOptions={{

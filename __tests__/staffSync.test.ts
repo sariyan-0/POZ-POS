@@ -6,6 +6,7 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 
 import { apiClient } from '../src/services/api/ApiClient';
 import { fetchStaff, verifyStaffPin } from '../src/services/api/staff';
+import { staffSession } from '../src/services/api/StaffSession';
 
 describe('staff sync', () => {
   afterEach(() => jest.restoreAllMocks());
@@ -50,6 +51,8 @@ describe('staff sync', () => {
         staff: { id: 'owner-1', name: 'Ari', role: 'owner', permissions: ['process_sales'] },
         staffToken: 'token',
         expiresIn: 28800,
+        offlineGrant: 'scoped-grant',
+        offlineExpiresIn: 604800,
       },
     });
 
@@ -60,8 +63,23 @@ describe('staff sync', () => {
     });
     expect(apiClient.post).toHaveBeenCalledWith(
       '/api/staff/verify-pin',
-      { pin: '2468' },
+      { pin: '2468', enrollOffline: true },
       { timeoutMs: 10000 },
     );
+    expect(staffSession.offlineGrant()?.token).toBe('scoped-grant');
+  });
+
+  test('manager approval does not enroll an offline PIN grant', async () => {
+    staffSession.clear();
+    jest.spyOn(apiClient, 'post').mockResolvedValue({
+      success: true,
+      data: {
+        staff: { id: 'manager-1', name: 'Manager', role: 'manager', permissions: ['issue_refunds'] },
+        staffToken: 'approval-token', expiresIn: 28800,
+      },
+    });
+    await verifyStaffPin('1357', true);
+    expect(apiClient.post).toHaveBeenCalledWith('/api/staff/verify-pin', { pin: '1357', enrollOffline: false }, { timeoutMs: 10000 });
+    expect(staffSession.offlineGrant()).toBeNull();
   });
 });

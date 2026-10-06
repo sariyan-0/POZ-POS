@@ -6,7 +6,7 @@ import { DEFAULT_BACKEND_URL, normalizeBackendUrl } from '../../config/backend';
 import { createId } from '../../utils/id';
 import { terminalConfigService } from '../../terminal/TerminalConfigService';
 import { apiClient, HttpResponseError } from './ApiClient';
-import { authCredentialStore } from './AuthCredentialStore';
+import { authCredentialStore, type AuthCredential } from './AuthCredentialStore';
 
 const connectionListeners = new Set<() => void>();
 export function subscribeDeviceConnection(listener: () => void) {
@@ -290,8 +290,8 @@ export async function claimDevice(input: { activation: string; name: string }) {
   return connection;
 }
 
-export async function loadCurrentDevice(): Promise<ConnectedDevice | null> {
-  const token = await authCredentialStore.getCredential();
+export async function loadCurrentDevice(credential?: AuthCredential | null): Promise<ConnectedDevice | null> {
+  const token = credential === undefined ? await authCredentialStore.getCredential() : credential;
   if (!token) {
     await clearCachedConnection();
     return null;
@@ -299,6 +299,7 @@ export async function loadCurrentDevice(): Promise<ConnectedDevice | null> {
   try {
     const payload = await apiClient.get<CurrentResponse>(
       apiConfig.endpoints.currentDevice,
+      { authTokenOverride: token.token },
     );
     if (payload.success !== true) return null;
     await saveCachedConnection(payload.data);

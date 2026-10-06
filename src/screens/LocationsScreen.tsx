@@ -7,7 +7,6 @@ import { AppScreen } from '../components/POSUI';
 import { usePOS } from '../hooks/usePOS';
 import { useAppStripeTerminal } from '../terminal/StripeTerminalProvider';
 import { apiClient } from '../services/api/ApiClient';
-import { loadPaymentAttempts } from '../storage/persistence';
 import { useAppTheme } from '../theme';
 type Location = {
   id: string;
@@ -54,8 +53,6 @@ export function LocationsScreen() {
     setSavingId(location.id);
     setError(null);
     try {
-      if ((await loadPaymentAttempts()).length)
-        throw new Error('Recover the saved payment before changing locations.');
       if (terminal.isReaderConnected)
         throw new Error('Disconnect the reader before changing locations.');
       await syncRegisterLocation({
