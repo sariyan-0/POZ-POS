@@ -1210,21 +1210,24 @@ export function POSProvider({ children }: PropsWithChildren) {
     setCatalogSyncError(null);
     try {
       const scope = await storageScope();
-      const result = await fetchCatalog();
+      const result = await fetchCatalog(stateRef.current.settings.business.catalogRevision);
       if (scope !== await storageScope()) return;
-      dispatch({
-        type: 'reconcileCatalog',
-        payload: {
-          products: result.products,
-          taxDefinitions: result.taxDefinitions,
-          modifierSets: result.modifierSets,
-          defaultTaxRate: result.defaultTaxRate,
-          businessSettings: result.businessSettings,
-          discounts: result.discounts,
-        },
-      });
-      lastCatalogSyncAtRef.current = result.syncedAt;
-      setLastCatalogSyncAt(result.syncedAt);
+      if (result) {
+        dispatch({
+          type: 'reconcileCatalog',
+          payload: {
+            products: result.products,
+            taxDefinitions: result.taxDefinitions,
+            modifierSets: result.modifierSets,
+            defaultTaxRate: result.defaultTaxRate,
+            businessSettings: result.businessSettings,
+            discounts: result.discounts,
+          },
+        });
+      }
+      const checkedAt = result?.syncedAt ?? new Date().toISOString();
+      lastCatalogSyncAtRef.current = checkedAt;
+      setLastCatalogSyncAt(checkedAt);
       setCatalogSyncStatus('synced');
     } catch (error) {
       setCatalogSyncStatus('error');
@@ -1318,16 +1321,22 @@ export function POSProvider({ children }: PropsWithChildren) {
     const refresh = () => {
       hasStoredDeviceCredential().then(connected => {
         if (!connected) return;
-        syncCatalog().catch(() => undefined);
         syncStaff().catch(() => undefined);
+        if (!staffSession.current()) return;
+        syncCatalog().catch(() => undefined);
         syncCustomers().catch(() => undefined);
-        if (staffSession.current()) fetchOrders().then(result=>dispatch({type:'mergeServerTransactions',payload:result.transactions})).catch(()=>undefined);
+        fetchOrders().then(result=>dispatch({type:'mergeServerTransactions',payload:result.transactions})).catch(()=>undefined);
         flushTransactionOutbox(sale => dispatch({ type: 'updateTransactionSync', payload: { transactionId: sale.id, update: sale } })).catch(() => undefined);
       }).catch(() => undefined);
     };
     refresh();
-    const unsubscribeSession = staffSession.subscribe(()=>{if(staffSession.current())refresh();});
-    const timer = setInterval(() => { if (AppState.currentState === 'active') refresh(); }, 30000);
+    let sessionRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribeSession = staffSession.subscribe(() => {
+      if (!staffSession.current()) return;
+      if (sessionRefreshTimer) clearTimeout(sessionRefreshTimer);
+      sessionRefreshTimer = setTimeout(refresh, 600);
+    });
+    const timer = setInterval(() => { if (AppState.currentState === 'active') refresh(); }, 120000);
     const subscription = AppState.addEventListener('change', next => { if (next === 'active') refresh(); });
     const unsubscribe = subscribeDeviceConnection(() => {
       storageScope().then(async scope => {
@@ -1340,7 +1349,7 @@ export function POSProvider({ children }: PropsWithChildren) {
         refresh();
       }).catch(() => undefined);
     });
-    return () => { clearInterval(timer); subscription.remove(); unsubscribe(); unsubscribeSession(); };
+    return () => { clearInterval(timer); if (sessionRefreshTimer) clearTimeout(sessionRefreshTimer); subscription.remove(); unsubscribe(); unsubscribeSession(); };
   }, [isHydrated, syncCatalog, syncCustomers, syncStaff]);
 
   setDisplayCurrency(state.settings.business.currency);

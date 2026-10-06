@@ -7,7 +7,7 @@ import {
   BusinessSettings,
   Discount,
 } from '../../models/pos';
-import { apiClient } from './ApiClient';
+import { apiClient, HttpResponseError } from './ApiClient';
 
 type CatalogCategory = { id: string; name: string; color?: string };
 type CatalogProduct = Record<string, unknown> & { id: string; name: string };
@@ -54,7 +54,7 @@ function strings(value: unknown): string[] {
     : [];
 }
 
-export async function fetchCatalog(): Promise<{
+type CatalogSyncResult = {
   products: Product[];
   taxDefinitions: TaxDefinition[];
   modifierSets: ModifierSet[];
@@ -62,10 +62,20 @@ export async function fetchCatalog(): Promise<{
   businessSettings: Partial<BusinessSettings>;
   discounts: Discount[];
   syncedAt: string;
-}> {
+};
+
+export function fetchCatalog(): Promise<CatalogSyncResult>;
+export function fetchCatalog(knownRevision: string): Promise<CatalogSyncResult | null>;
+export function fetchCatalog(knownRevision?: string): Promise<CatalogSyncResult | null>;
+export async function fetchCatalog(knownRevision?: string): Promise<CatalogSyncResult | null> {
   const payload = await apiClient.get<unknown>(apiConfig.endpoints.catalog, {
     timeoutMs: 10000,
+    headers: knownRevision ? { 'If-None-Match': `"${knownRevision}"` } : undefined,
+  }).catch(error => {
+    if (knownRevision && error instanceof HttpResponseError && error.status === 304) return null;
+    throw error;
   });
+  if (payload === null) return null;
   if (!payload || typeof payload !== 'object')
     throw new Error('Invalid catalog response');
   const root = payload as Record<string, unknown>;

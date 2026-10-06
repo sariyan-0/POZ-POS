@@ -613,7 +613,7 @@ function StripeTerminalBootstrap({
     return 'bluetoothScan';
   }
 
-  function buildDiscoverParams(readerMode: ReaderMode): DiscoverReadersParams {
+  function buildDiscoverParams(readerMode: ReaderMode, timeoutSeconds = 10): DiscoverReadersParams {
     if (readerMode === 'tap_to_pay') {
       return {
         discoveryMethod: 'tapToPay',
@@ -625,7 +625,7 @@ function StripeTerminalBootstrap({
       const currentConfig = terminalConfigRef.current;
       return {
         discoveryMethod: 'internet',
-        timeout: 10,
+        timeout: timeoutSeconds,
         locationId: currentConfig.locationId.trim() || undefined,
       };
     }
@@ -633,7 +633,7 @@ function StripeTerminalBootstrap({
     return {
       discoveryMethod: 'bluetoothScan',
       simulated: readerMode === 'simulated',
-      timeout: 10,
+      timeout: timeoutSeconds,
     };
   }
 
@@ -779,7 +779,7 @@ function StripeTerminalBootstrap({
     }
   }
 
-  async function discoverReaders() {
+  async function discoverReaders(timeoutSeconds = 10) {
     if (!isStripeReady) {
       setDiscoveryError(STRIPE_SETUP_REQUIRED_MESSAGE);
       setDiscoveryStatus('error');
@@ -806,7 +806,7 @@ function StripeTerminalBootstrap({
     setReaderInputOptions(null);
 
     const currentConfig = terminalConfigRef.current;
-    const params = buildDiscoverParams(currentConfig.readerMode);
+    const params = buildDiscoverParams(currentConfig.readerMode, timeoutSeconds);
 
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
@@ -1171,7 +1171,9 @@ function StripeTerminalBootstrap({
       return;
     }
 
-    await discoverReaders();
+    // A remembered nearby Bluetooth reader should not require the full manual
+    // scan window every time the app starts. Manual discovery still uses 10s.
+    await discoverReaders(currentConfig.readerMode === 'bluetooth' || currentConfig.readerMode === 'simulated' ? 5 : 10);
     const preferredReader = findPreferredReader(readersRef.current);
     if (!preferredReader) {
       setReaderConnectionMessage(null);

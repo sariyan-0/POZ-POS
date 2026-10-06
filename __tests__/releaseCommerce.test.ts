@@ -140,6 +140,14 @@ test('catalog preserves USD, inclusive settings, defaults, fractional rates, and
   expect(catalog.businessSettings.receiptFooter).toBe('Thank you');
   expect(catalog.discounts[0].requirePasscode).toBe(true);
 });
+test('unchanged catalog uses its revision without rebuilding local register state', async () => {
+  const get = jest.spyOn(apiClient, 'get').mockRejectedValueOnce(new HttpResponseError(304, ''));
+  await expect(fetchCatalog('known-revision')).resolves.toBeNull();
+  expect(get).toHaveBeenCalledWith('/api/catalog', {
+    timeoutMs: 10000,
+    headers: { 'If-None-Match': '"known-revision"' },
+  });
+});
 test('disabled default does not fall back to a stale scalar rate', () => {
   const state = {
     ...initialPOSState,
