@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
   ActivityIndicator,
@@ -30,6 +30,8 @@ import {
   verifyDeviceActivation,
 } from '../services/api/deviceConnection';
 import { useAppTheme } from '../theme';
+import { AccountLoginScreen } from './AccountLoginScreen';
+import { loadPendingAccountLogin } from '../services/api/accountDeviceLogin';
 
 type ActivationStage = 'pair' | 'name';
 
@@ -41,8 +43,12 @@ export function DeviceActivationScreen({ onBack }: { onBack?: () => void }) {
   const transition = useRef(new Animated.Value(1)).current;
   const scanSuccess = useRef(new Animated.Value(0)).current;
   const scanSuccessAnimation = useRef<Animated.CompositeAnimation | null>(null);
-  const scrollViewRef = useRef<any>(null);
+  const scrollViewRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const contentRef = useRef<React.ComponentRef<typeof View>>(null);
+  const formRef = useRef<React.ComponentRef<typeof View>>(null);
+  const inputFocused = useRef(false);
   const [stage, setStage] = useState<ActivationStage>('pair');
+  const [accountMode, setAccountMode] = useState(false);
   const [activation, setActivation] = useState('');
   const [verified, setVerified] = useState<VerifiedDeviceActivation | null>(
     null,
@@ -54,7 +60,29 @@ export function DeviceActivationScreen({ onBack }: { onBack?: () => void }) {
   const [scannerVerified, setScannerVerified] = useState(false);
   const [reduceMotion, setReduceMotion] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  useEffect(() => {
+    let active = true;
+    loadPendingAccountLogin().then(pending => { if (active && pending) setAccountMode(true); }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+  const accountConnected = useCallback(async () => {
+    await refresh();
+    await Promise.allSettled([syncCatalog(), syncStaff(), syncCustomers()]);
+  }, [refresh, syncCatalog, syncStaff, syncCustomers]);
+  const revealFocusedForm = useCallback(() => {
+    const content = contentRef.current;
+    if (!inputFocused.current || !content) return;
+    formRef.current?.measureLayout(
+      content,
+      (_x, y) => {
+        scrollViewRef.current?.scrollTo({
+          y: Math.max(0, y - 16),
+          animated: false,
+        });
+      },
+      () => undefined,
+    );
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -95,21 +123,18 @@ export function DeviceActivationScreen({ onBack }: { onBack?: () => void }) {
   );
 
   useEffect(() => {
-    const showSubscription = Keyboard.addListener('keyboardDidShow', () => {
-      setKeyboardVisible(true);
-      setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 80);
-    });
-    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
-      setKeyboardVisible(false);
-    });
-    return () => {
-      showSubscription.remove();
-      hideSubscription.remove();
-    };
-  }, []);
+    // Measure after the keyboard has resized the viewport, rather than scrolling
+    // to the footer and pushing the code field off the top of the screen.
+    const subscription = Keyboard.addListener(
+      'keyboardDidShow',
+      revealFocusedForm,
+    );
+    return () => subscription.remove();
+  }, [revealFocusedForm]);
 
-  function revealFormActions() {
-    setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 220);
+  function revealForm() {
+    inputFocused.current = true;
+    revealFocusedForm();
   }
 
   async function verify(
@@ -233,6 +258,8 @@ export function DeviceActivationScreen({ onBack }: { onBack?: () => void }) {
     ],
   };
 
+  if (accountMode) return <AccountLoginScreen onBack={() => setAccountMode(false)} onConnected={accountConnected} />;
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -278,55 +305,66 @@ export function DeviceActivationScreen({ onBack }: { onBack?: () => void }) {
 
       <ScrollView
         ref={scrollViewRef}
-        automaticallyAdjustKeyboardInsets
+        automaticallyAdjustKeyboardInsets={false}
+        onLayout={revealFocusedForm}
+        onContentSizeChange={revealFocusedForm}
         contentInsetAdjustmentBehavior="never"
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={[
           styles.content,
           {
-            paddingBottom: keyboardVisible
-              ? Math.max(insets.bottom + 150, 170)
-              : Math.max(insets.bottom + 20, 30),
+            paddingBottom: Math.max(insets.bottom + 20, 30),
           },
         ]}
       >
-        <Animated.View style={[styles.shell, animatedStageStyle]}>
-          {stage === 'pair' ? (
-            <PairStage
-              activation={activation}
-              connectionError={connectionError}
-              isBusy={isBusy}
-              isCodeComplete={isCodeComplete}
-              isOpeningScanner={isOpeningScanner}
-              scannerVerified={scannerVerified}
-              scanSuccess={scanSuccess}
-              isVerifying={isVerifying}
-              message={message}
-              onActivationChange={value => {
-                setActivation(formatActivationCode(value));
-                setMessage(null);
-              }}
-              onOpenScanner={openScanner}
-              onInputFocus={revealFormActions}
-              onRetry={refresh}
-              onVerify={() => verify()}
-            />
-          ) : (
-            <NameStage
-              canFinish={canFinish}
-              isConnecting={isConnecting}
-              message={message}
-              registerName={registerName}
-              onFinish={finishSetup}
-              onInputFocus={revealFormActions}
-              onNameChange={value => {
-                setRegisterName(value);
-                setMessage(null);
-              }}
-            />
-          )}
-        </Animated.View>
+        <View ref={contentRef} collapsable={false} style={styles.scrollContent}>
+          <Animated.View style={[styles.shell, animatedStageStyle]}>
+            {stage === 'pair' ? (
+              <PairStage
+                activation={activation}
+                connectionError={connectionError}
+                isBusy={isBusy}
+                isCodeComplete={isCodeComplete}
+                isOpeningScanner={isOpeningScanner}
+                scannerVerified={scannerVerified}
+                scanSuccess={scanSuccess}
+                isVerifying={isVerifying}
+                message={message}
+                onActivationChange={value => {
+                  setActivation(formatActivationCode(value));
+                  setMessage(null);
+                }}
+                onOpenScanner={openScanner}
+                formRef={formRef}
+                onInputFocus={revealForm}
+                onInputBlur={() => {
+                  inputFocused.current = false;
+                }}
+                onRetry={refresh}
+                onVerify={() => verify()}
+                onAccountLogin={() => setAccountMode(true)}
+              />
+            ) : (
+              <NameStage
+                canFinish={canFinish}
+                isConnecting={isConnecting}
+                message={message}
+                registerName={registerName}
+                onFinish={finishSetup}
+                formRef={formRef}
+                onInputFocus={revealForm}
+                onInputBlur={() => {
+                  inputFocused.current = false;
+                }}
+                onNameChange={value => {
+                  setRegisterName(value);
+                  setMessage(null);
+                }}
+              />
+            )}
+          </Animated.View>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -344,9 +382,12 @@ type PairStageProps = {
   scanSuccess: Animated.Value;
   onActivationChange: (value: string) => void;
   onOpenScanner: () => void;
+  formRef: React.RefObject<React.ComponentRef<typeof View> | null>;
   onInputFocus: () => void;
+  onInputBlur: () => void;
   onRetry: () => void | Promise<void>;
   onVerify: () => void;
+  onAccountLogin: () => void;
 };
 
 function PairStage({
@@ -361,9 +402,12 @@ function PairStage({
   scanSuccess,
   onActivationChange,
   onOpenScanner,
+  formRef,
   onInputFocus,
+  onInputBlur,
   onRetry,
   onVerify,
+  onAccountLogin,
 }: PairStageProps) {
   const theme = useAppTheme();
   return (
@@ -384,6 +428,10 @@ function PairStage({
           payments.
         </Text>
       </View>
+
+      <Pressable accessibilityRole="button" onPress={onAccountLogin} style={{ minHeight: 52, justifyContent: 'center', alignItems: 'center' }}>
+        <Text style={{ color: theme.colors.accent, fontSize: 16, fontWeight: '600' }}>Sign in with email and password</Text>
+      </Pressable>
 
       <Pressable
         accessibilityRole="button"
@@ -463,7 +511,7 @@ function PairStage({
         />
       </View>
 
-      <View style={styles.manualSection}>
+      <View ref={formRef} collapsable={false} style={styles.manualSection}>
         <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
           Enter activation code
         </Text>
@@ -495,6 +543,7 @@ function PairStage({
             selectionColor={theme.colors.success}
             onChangeText={onActivationChange}
             onFocus={onInputFocus}
+            onBlur={onInputBlur}
             onSubmitEditing={() => {
               if (isCodeComplete) onVerify();
             }}
@@ -556,7 +605,9 @@ type NameStageProps = {
   message: string | null;
   registerName: string;
   onFinish: () => void;
+  formRef: React.RefObject<React.ComponentRef<typeof View> | null>;
   onInputFocus: () => void;
+  onInputBlur: () => void;
   onNameChange: (value: string) => void;
 };
 
@@ -566,7 +617,9 @@ function NameStage({
   message,
   registerName,
   onFinish,
+  formRef,
   onInputFocus,
+  onInputBlur,
   onNameChange,
 }: NameStageProps) {
   const theme = useAppTheme();
@@ -596,7 +649,7 @@ function NameStage({
         </Text>
       </View>
 
-      <View style={styles.nameForm}>
+      <View ref={formRef} collapsable={false} style={styles.nameForm}>
         <Text style={[styles.inputLabel, { color: theme.colors.text }]}>
           Register name
         </Text>
@@ -612,6 +665,7 @@ function NameStage({
           selectionColor={theme.colors.success}
           onChangeText={onNameChange}
           onFocus={onInputFocus}
+          onBlur={onInputBlur}
           onSubmitEditing={onFinish}
           style={[
             styles.nameInput,
@@ -707,6 +761,7 @@ const styles = StyleSheet.create({
   },
   help: { fontSize: 16, lineHeight: 22, fontWeight: '700' },
   content: { flexGrow: 1, paddingHorizontal: 24 },
+  scrollContent: { flexGrow: 1 },
   shell: {
     flexGrow: 1,
     alignSelf: 'center',

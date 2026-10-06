@@ -1,3 +1,4 @@
+import {SkeletonRows} from '../components/Skeleton';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Image,
@@ -260,7 +261,7 @@ export function AllItemsScreen() {
         </View>
       </View>
 
-      {filteredProducts.length ? (
+      {catalogSyncStatus==='syncing'&&!state.products.length?<SkeletonRows label="Loading items" count={5}/>:filteredProducts.length ? (
         <View style={styles.productGrid}>
           {filteredProducts.map(product => (
             <ProductCard

@@ -1,3 +1,4 @@
+import {SkeletonRows} from '../components/Skeleton';
 import React, { useMemo, useState } from 'react';
 import {
   Animated,
@@ -609,7 +610,7 @@ export function CheckoutScreen() {
                   })}
                 </View>
 
-                {!favoriteProducts.length ? (
+                {catalogSyncStatus==='syncing'&&!state.products.length?<SkeletonRows label="Loading your items" variant="catalog" count={4}/>:!favoriteProducts.length ? (
                   <EmptyNotice
                     title="No favorites yet"
                     body="Mark items as favorites when you create or edit them."

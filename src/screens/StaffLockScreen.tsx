@@ -160,9 +160,11 @@ export function StaffLockScreen() {
       setErrorText('');
       setFailedAttempts(0);
       setLockedUntil(null);
-    } catch {
+    } catch (error) {
       triggerPinError(
-        'That PIN was not recognized, or sign-in is temporarily unavailable.',
+        error instanceof Error && (error.message.startsWith('Too many PIN') || error.message.startsWith('Connect to verify'))
+          ? error.message
+          : 'Connect to sign in, or use a PIN verified online during this shift.',
         failedAttempts + 1,
       );
     } finally {

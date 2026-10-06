@@ -11,6 +11,11 @@ export const staffSession = {
     if (asApproval) approval = session; else { current = session; approval = null; }
     listeners.forEach(listener => listener());
   },
+  restore(session: Session) {
+    if (!session.token || session.expiresAt <= Date.now()) throw new Error('Staff session expired. Connect to sign in again.');
+    current = { ...session }; approval = null;
+    listeners.forEach(listener => listener());
+  },
   current() { return current && current.expiresAt > Date.now() ? current : null; },
   approval() { return approval && approval.expiresAt > Date.now() ? approval : null; },
   clear() { current = null; approval = null; listeners.forEach(listener => listener()); },

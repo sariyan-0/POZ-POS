@@ -1,8 +1,10 @@
+import { syncRegisterLocation } from '../services/registerLocation';
+import { useDeviceConnection } from '../context/DeviceConnectionProvider';
+import { SkeletonRows } from '../components/Skeleton';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { AppScreen } from '../components/POSUI';
 import { usePOS } from '../hooks/usePOS';
-import { useDeviceConnection } from '../context/DeviceConnectionProvider';
 import { useAppStripeTerminal } from '../terminal/StripeTerminalProvider';
 import { apiClient } from '../services/api/ApiClient';
 import { loadPaymentAttempts } from '../storage/persistence';
@@ -18,10 +20,13 @@ export function LocationsScreen() {
   const theme = useAppTheme();
   const { hasPermission, syncCatalog } = usePOS();
   const { refresh } = useDeviceConnection();
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const terminal = useAppStripeTerminal();
   const [locations, setLocations] = useState<Location[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(true);
+  const [savingId, setSavingId] = useState<string | null>(null);
+
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(async () => {
     setBusy(true);
@@ -46,28 +51,40 @@ export function LocationsScreen() {
   async function select(location: Location) {
     if (busy) return;
     setBusy(true);
+    setSavingId(location.id);
     setError(null);
     try {
       if ((await loadPaymentAttempts()).length)
         throw new Error('Recover the saved payment before changing locations.');
       if (terminal.isReaderConnected)
         throw new Error('Disconnect the reader before changing locations.');
-      await apiClient.patch('/api/devices/current', {
-        locationId: location.id,
+      await syncRegisterLocation({
+        saveRemote: async () => {
+          await apiClient.patch(
+            '/api/devices/current',
+            { locationId: location.id },
+            { timeoutMs: 15000 },
+          );
+        },
+        saveLocal: () =>
+          terminal.saveTerminalConfig({
+            ...terminal.terminalConfig,
+            locationId: location.stripe_terminal_location_id ?? '',
+            locationDisplayName: location.name,
+            locationAddressSummary: [
+              location.address.line1,
+              location.address.city,
+            ]
+              .filter(Boolean)
+              .join(', '),
+            preferredReaderId: '',
+            preferredReaderSerialNumber: '',
+            preferredReaderLabel: '',
+          }),
+        refreshConnection: refresh,
+        refreshCatalog: syncCatalog,
+        onProgress: setSaveMessage,
       });
-      await terminal.saveTerminalConfig({
-        ...terminal.terminalConfig,
-        locationId: location.stripe_terminal_location_id ?? '',
-        locationDisplayName: location.name,
-        locationAddressSummary: [location.address.line1, location.address.city]
-          .filter(Boolean)
-          .join(', '),
-        preferredReaderId: '',
-        preferredReaderSerialNumber: '',
-        preferredReaderLabel: '',
-      });
-      await refresh();
-      await syncCatalog();
       setSelected(location.id);
     } catch (cause) {
       setError(
@@ -75,6 +92,8 @@ export function LocationsScreen() {
       );
     } finally {
       setBusy(false);
+      setSavingId(null);
+      setSaveMessage(null);
     }
   }
   return (
@@ -95,7 +114,27 @@ export function LocationsScreen() {
       >
         <Text style={{ color: theme.colors.accent }}>Refresh locations</Text>
       </Pressable>
-      {busy && <ActivityIndicator color={theme.colors.accent} />}{' '}
+      {busy && !locations.length && (
+        <SkeletonRows label="Loading locations" count={3} />
+      )}
+      {saveMessage && (
+        <View
+          accessibilityLiveRegion="polite"
+          style={{
+            padding: 16,
+            gap: 12,
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: theme.colors.accentSoft,
+            borderRadius: 12,
+          }}
+        >
+          <ActivityIndicator color={theme.colors.accent} />
+          <Text style={{ flex: 1, color: theme.colors.text, fontSize: 16 }}>
+            {saveMessage}
+          </Text>
+        </View>
+      )}
       {!busy && !locations.length && (
         <Text style={{ color: theme.colors.textMuted }}>
           No active locations. Create one in Dashboard → Settings.
@@ -136,7 +175,9 @@ export function LocationsScreen() {
                 style={{ minHeight: 48, justifyContent: 'center' }}
               >
                 <Text style={{ color: theme.colors.accent }}>
-                  Use this location
+                  {savingId === location.id
+                    ? saveMessage ?? 'Saving location…'
+                    : 'Use this location'}
                 </Text>
               </Pressable>
             )}

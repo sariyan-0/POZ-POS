@@ -11,10 +11,12 @@ jest.mock('react-native-safe-area-context', () => {
 });
 
 jest.mock('react-native-keychain', () => {
-  let storedPassword = null;
+  const storedPasswords = new Map();
 
   return {
-    getGenericPassword: jest.fn(async () => {
+    ACCESSIBLE: { WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'AccessibleWhenUnlockedThisDeviceOnly' },
+    getGenericPassword: jest.fn(async (options = {}) => {
+      const storedPassword = storedPasswords.get(options.service);
       if (!storedPassword) {
         return false;
       }
@@ -24,12 +26,12 @@ jest.mock('react-native-keychain', () => {
         password: storedPassword,
       };
     }),
-    setGenericPassword: jest.fn(async (_username, password) => {
-      storedPassword = password;
+    setGenericPassword: jest.fn(async (_username, password, options = {}) => {
+      storedPasswords.set(options.service, password);
       return true;
     }),
-    resetGenericPassword: jest.fn(async () => {
-      storedPassword = null;
+    resetGenericPassword: jest.fn(async (options = {}) => {
+      storedPasswords.delete(options.service);
       return true;
     }),
   };

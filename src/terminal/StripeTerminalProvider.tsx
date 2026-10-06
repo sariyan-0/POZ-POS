@@ -6,8 +6,6 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { apiClient } from '../services/api/ApiClient';
-import { usePOS } from '../context/POSProvider';
 import { Platform } from 'react-native';
 import {
   DiscoverReadersParams,
@@ -106,6 +104,7 @@ type StripeTerminalContextValue = {
   selectLocation: (location: TerminalLocationSummary) => Promise<void>;
   createLocation: (input: CreateTerminalLocationInput) => Promise<void>;
   discoverReaders: () => Promise<void>;
+  cancelDiscovery: () => Promise<void>;
   connectReader: (
     readerId: string,
     locationIdOverride?: string,
@@ -133,8 +132,7 @@ const StripeTerminalContext = createContext<
 function StripeTerminalBootstrap({
   children,
 }: PropsWithChildren): React.JSX.Element {
-  const { connection, refresh } = useDeviceConnection();
-  const { syncCatalog } = usePOS();
+  const { connection } = useDeviceConnection();
   const isStripeReady = connection?.business.stripeConnected === true;
   const [status, setStatus] = useState<StripeTerminalStatus>('idle');
   const [initializationError, setInitializationError] = useState<string | null>(
@@ -159,6 +157,7 @@ function StripeTerminalBootstrap({
     'idle' | 'loading' | 'ready' | 'error'
   >('idle');
   const [locationsError, setLocationsError] = useState<string | null>(null);
+  const locationsRequestRef = useRef<Promise<void> | null>(null);
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus | null>(
     null,
   );
@@ -179,11 +178,15 @@ function StripeTerminalBootstrap({
     terminalConfigService.getSnapshot(),
   );
   const [initializationRetryKey, setInitializationRetryKey] = useState(0);
+  const [isConfigLoaded, setIsConfigLoaded] = useState(false);
   const terminalConfigRef = useRef<TerminalConfiguration>(
     terminalConfigService.getSnapshot(),
   );
   const readersRef = useRef<Reader.Type[]>([]);
   const connectionAttemptRef = useRef(0);
+  const discoveryAttemptRef = useRef(0);
+  const discoveryActiveRef = useRef(false);
+  const cancellingDiscoveryRef = useRef<Promise<void> | null>(null);
   const autoConnectAttemptedRef = useRef(false);
   const autoConnectPreferredReaderRef = useRef<() => Promise<void>>(
     async () => undefined,
@@ -209,12 +212,14 @@ function StripeTerminalBootstrap({
     isInitialized,
   } = useStripeTerminal({
     onUpdateDiscoveredReaders: readers => {
+      if (!discoveryActiveRef.current) return;
       const deduped = dedupeReaders(readers);
       readersRef.current = deduped;
       setDiscoveryError(null);
-      setDiscoveryStatus(deduped.length > 0 ? 'ready' : 'discovering');
+      setDiscoveryStatus('discovering');
     },
     onFinishDiscoveringReaders: error => {
+      if (!discoveryActiveRef.current) return;
       if (error) {
         setDiscoveryError(getSafeStripeError(error));
         setDiscoveryStatus('error');
@@ -335,6 +340,7 @@ function StripeTerminalBootstrap({
 
       terminalConfigRef.current = config;
       setTerminalConfig(config);
+      setIsConfigLoaded(true);
     });
 
     const unsubscribe = terminalConfigService.subscribe(() => {
@@ -376,7 +382,8 @@ function StripeTerminalBootstrap({
   }, []);
 
   useEffect(() => {
-    readersRef.current = dedupeReaders(discoveredReaders);
+    if (discoveryActiveRef.current)
+      readersRef.current = dedupeReaders(discoveredReaders);
   }, [discoveredReaders]);
 
   useEffect(() => {
@@ -534,7 +541,7 @@ function StripeTerminalBootstrap({
   }, [isInitialized, isStripeReady, status]);
 
   useEffect(() => {
-    if (!isInitialized || status !== 'ready') {
+    if (!isConfigLoaded || !isInitialized || status !== 'ready') {
       return;
     }
 
@@ -572,6 +579,7 @@ function StripeTerminalBootstrap({
   }, [
     connectedReader,
     connectionStatus,
+    isConfigLoaded,
     isInitialized,
     status,
     terminalConfig,
@@ -586,14 +594,9 @@ function StripeTerminalBootstrap({
   ]);
 
   async function saveTerminalConfig(config: TerminalConfiguration) {
-    if(config.locationId && config.locationId!==terminalConfigRef.current.locationId){
-      await apiClient.patch('/api/devices/current',{stripeLocationId:config.locationId});
-      await refresh();
-      await syncCatalog();
-    }
-    await terminalConfigService.save(config);
-    terminalConfigRef.current = config;
-    setTerminalConfig(config);
+    const saved = await terminalConfigService.save(config);
+    terminalConfigRef.current = saved;
+    setTerminalConfig(saved);
   }
 
   function getDiscoveryMethodForMode(
@@ -715,23 +718,32 @@ function StripeTerminalBootstrap({
   }
 
   async function refreshLocations() {
-    if (!isStripeReady) {
-      setLocationsError(STRIPE_SETUP_REQUIRED_MESSAGE);
-      setLocationsStatus('error');
-      return;
-    }
-    setLocationsStatus('loading');
-    setLocationsError(null);
+    if (locationsRequestRef.current) return locationsRequestRef.current;
+    const request = (async () => {
+      if (!isStripeReady) {
+        setLocationsError(STRIPE_SETUP_REQUIRED_MESSAGE);
+        setLocationsStatus('error');
+        return;
+      }
+      setLocationsStatus('loading');
+      setLocationsError(null);
 
+      try {
+        const nextLocations = await loadTerminalLocations();
+        setLocations(nextLocations);
+        setLocationsStatus('ready');
+      } catch (error) {
+        setLocationsStatus('error');
+        setLocationsError(
+          getSafeStripeError(error, 'Unable to load Stripe Terminal locations'),
+        );
+      }
+    })();
+    locationsRequestRef.current = request;
     try {
-      const nextLocations = await loadTerminalLocations();
-      setLocations(nextLocations);
-      setLocationsStatus('ready');
-    } catch (error) {
-      setLocationsStatus('error');
-      setLocationsError(
-        getSafeStripeError(error, 'Unable to load Stripe Terminal locations'),
-      );
+      await request;
+    } finally {
+      locationsRequestRef.current = null;
     }
   }
 
@@ -750,7 +762,11 @@ function StripeTerminalBootstrap({
 
     try {
       const location = await createTerminalLocation(input);
-      await refreshLocations();
+      setLocations(current => [
+        ...current.filter(item => item.id !== location.id),
+        location,
+      ]);
+      setLocationsStatus('ready');
       await selectLocation(location);
     } catch (error) {
       const locationError =
@@ -775,14 +791,11 @@ function StripeTerminalBootstrap({
       return;
     }
 
-    await settleQuickly(
-      sdkCancelDiscovering().then(() => undefined),
-      CANCEL_DISCOVERY_GRACE_MS,
-    );
-    await settleQuickly(
-      sdkCancelEasyConnect().then(() => undefined),
-      CANCEL_DISCOVERY_GRACE_MS,
-    );
+    if (discoveryActiveRef.current) return;
+    discoveryActiveRef.current = true;
+    const attempt = ++discoveryAttemptRef.current;
+    const isCurrent = () => discoveryAttemptRef.current === attempt;
+    readersRef.current = [];
 
     setDiscoveryError(null);
     setDisconnectReason(null);
@@ -798,8 +811,11 @@ function StripeTerminalBootstrap({
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
     try {
+      await cancellingDiscoveryRef.current;
+      if (!isCurrent()) return;
       if (requiresAndroidBluetoothPermissions(currentConfig.readerMode)) {
         await ensureAndroidReaderPermissions();
+        if (!isCurrent()) return;
       }
 
       if (currentConfig.readerMode === 'tap_to_pay') {
@@ -809,6 +825,7 @@ function StripeTerminalBootstrap({
             : 'Checking Tap to Pay support on this phone...',
         );
         await verifyTapToPaySupport();
+        if (!isCurrent()) return;
       }
 
       const result = await Promise.race([
@@ -828,6 +845,7 @@ function StripeTerminalBootstrap({
         }),
       ]);
 
+      if (!isCurrent()) return;
       if (result.error) {
         setDiscoveryError(getSafeStripeError(result.error));
         setDiscoveryStatus('error');
@@ -849,17 +867,55 @@ function StripeTerminalBootstrap({
         );
       }
     } catch (error) {
+      if (!isCurrent()) return;
       setDiscoveryError(
         getSafeStripeError(error, 'Unable to discover Stripe readers'),
       );
       setDiscoveryStatus('error');
       setReaderConnectionMessage(null);
       readersRef.current = [];
-      await sdkCancelDiscovering().catch(() => undefined);
+      discoveryActiveRef.current = false;
+      await settleQuickly(
+        sdkCancelDiscovering().then(() => undefined),
+        CANCEL_DISCOVERY_GRACE_MS,
+      );
     } finally {
+      if (isCurrent()) {
+        discoveryActiveRef.current = false;
+        setDiscoveryStatus(current =>
+          current === 'discovering'
+            ? readersRef.current.length
+              ? 'ready'
+              : 'empty'
+            : current,
+        );
+      }
       if (timeoutId) {
         clearTimeout(timeoutId);
       }
+    }
+  }
+
+  async function cancelDiscovery() {
+    const wasActive = discoveryActiveRef.current;
+    discoveryAttemptRef.current += 1;
+    discoveryActiveRef.current = false;
+    readersRef.current = [];
+    setDiscoveryStatus('idle');
+    setDiscoveryError(null);
+    setReaderConnectionMessage(null);
+    autoConnectAttemptedRef.current = true;
+    if (!wasActive) return;
+    const pending = settleQuickly(
+      sdkCancelDiscovering().then(() => undefined),
+      CANCEL_DISCOVERY_GRACE_MS,
+    );
+    cancellingDiscoveryRef.current = pending;
+    try {
+      await pending;
+    } finally {
+      if (cancellingDiscoveryRef.current === pending)
+        cancellingDiscoveryRef.current = null;
     }
   }
 
@@ -897,6 +953,8 @@ function StripeTerminalBootstrap({
       return;
     }
 
+    discoveryAttemptRef.current += 1;
+    discoveryActiveRef.current = false;
     setConnectionError(null);
     setReaderUpdateStatus('idle');
     setReaderUpdateProgress(null);
@@ -987,12 +1045,13 @@ function StripeTerminalBootstrap({
     setReaderUpdateProgress(null);
 
     await sdkCancelEasyConnect().catch(() => undefined);
-    await sdkCancelDiscovering().catch(() => undefined);
+    await cancelDiscovery();
 
     const result = await sdkDisconnectReader();
     if (result?.error) {
-      setConnectionError(getSafeStripeError(result.error));
-      return;
+      const message = getSafeStripeError(result.error);
+      setConnectionError(message);
+      throw new Error(message);
     }
 
     setConnectedReader(null);
@@ -1037,8 +1096,8 @@ function StripeTerminalBootstrap({
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
     try {
+      if (discoveryActiveRef.current) await cancelDiscovery();
       await verifyTapToPaySupport();
-      await sdkCancelDiscovering().catch(() => undefined);
 
       const result = await Promise.race([
         sdkEasyConnect({
@@ -1142,7 +1201,8 @@ function StripeTerminalBootstrap({
     }
 
     const activeReader = sdkConnectedReader ?? connectedReader;
-    if (retrieved.paymentIntent.status === 'succeeded') return retrieved.paymentIntent;
+    if (retrieved.paymentIntent.status === 'succeeded')
+      return retrieved.paymentIntent;
 
     if (activeReader?.simulated && retrieved.paymentIntent.livemode) {
       throw new Error(
@@ -1220,7 +1280,11 @@ function StripeTerminalBootstrap({
     <StripeTerminalContext.Provider
       value={{
         status,
-        isReady: isStripeReady && isInitialized && status === 'ready',
+        isReady:
+          isStripeReady &&
+          isConfigLoaded &&
+          isInitialized &&
+          status === 'ready',
         isReaderConnected:
           connectionStatus === 'connected' && connectedReader !== null,
         initializationError,
@@ -1248,6 +1312,7 @@ function StripeTerminalBootstrap({
         selectLocation,
         createLocation,
         discoverReaders,
+        cancelDiscovery,
         connectReader,
         disconnectReader,
         forgetReader,

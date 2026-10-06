@@ -25,13 +25,53 @@ import { OnboardingScreen } from './src/screens/OnboardingScreen';
 function AppRoot() {
   const { isStaffAuthenticated } = usePOS();
   const theme = useAppTheme();
-  const [attempts,setAttempts]=useState<Awaited<ReturnType<typeof loadPaymentAttempts>>|null>(null);
-  const [recoveryError,setRecoveryError]=useState<string|null>(null);
-  const refreshAttempts=useCallback(async()=>{setRecoveryError(null);try{setAttempts(await loadPaymentAttempts());}catch{setRecoveryError('Saved payment status could not be read. Retry before taking another payment.');setAttempts(null);}},[]);
-  useEffect(()=>{if(isStaffAuthenticated)refreshAttempts();else setAttempts(null);},[isStaffAuthenticated,refreshAttempts]);
-  if(isStaffAuthenticated && recoveryError)return <View style={{padding:24,gap:16}}><Text style={{color:theme.colors.text,fontSize:16}}>{recoveryError}</Text><Pressable accessibilityRole="button" style={{minHeight:48,justifyContent:'center'}} onPress={()=>refreshAttempts()}><Text style={{color:theme.colors.accent,fontSize:16}}>Retry recovery</Text></Pressable></View>;
-  if (isStaffAuthenticated && attempts===null) return <ActivityIndicator color={theme.colors.accent}/>;
-  if (isStaffAuthenticated && attempts?.length) return <PaymentRecoveryScreen attempts={attempts} onResolved={()=>refreshAttempts().catch(()=>undefined)}/>;
+  const [attempts, setAttempts] = useState<Awaited<
+    ReturnType<typeof loadPaymentAttempts>
+  > | null>(null);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const refreshAttempts = useCallback(async () => {
+    setRecoveryError(null);
+    try {
+      setAttempts(await loadPaymentAttempts());
+    } catch {
+      setRecoveryError(
+        'Saved payment status could not be read. Retry before taking another payment.',
+      );
+      setAttempts(null);
+    }
+  }, []);
+  useEffect(() => {
+    if (isStaffAuthenticated) refreshAttempts();
+    else setAttempts(null);
+  }, [isStaffAuthenticated, refreshAttempts]);
+  if (isStaffAuthenticated && recoveryError)
+    return (
+      <View style={{ padding: 24, gap: 16 }}>
+        <Text style={{ color: theme.colors.text, fontSize: 16 }}>
+          {recoveryError}
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          style={{ minHeight: 48, justifyContent: 'center' }}
+          onPress={() => refreshAttempts()}
+        >
+          <Text style={{ color: theme.colors.accent, fontSize: 16 }}>
+            Retry recovery
+          </Text>
+        </Pressable>
+      </View>
+    );
+  if (isStaffAuthenticated && attempts === null)
+    return <View style={[styles.splash, { backgroundColor: theme.colors.background }]}>
+      <ActivityIndicator accessibilityLabel="Checking saved payments" color={theme.colors.accent} />
+    </View>;
+  if (isStaffAuthenticated && attempts?.length)
+    return (
+      <PaymentRecoveryScreen
+        attempts={attempts}
+        onResolved={() => refreshAttempts().catch(() => undefined)}
+      />
+    );
 
   if (!isStaffAuthenticated) {
     return <StaffLockScreen />;
@@ -40,7 +80,9 @@ function AppRoot() {
   return (
     <>
       <StatusBar barStyle={theme.isDark ? 'light-content' : 'dark-content'} />
-      <AppNavigator onLeavePayment={()=>refreshAttempts().catch(()=>undefined)}/>
+      <AppNavigator
+        onLeavePayment={() => refreshAttempts().catch(() => undefined)}
+      />
     </>
   );
 }
@@ -75,7 +117,7 @@ function AppConnectionGate() {
     onboardingStatus === 'loading' ||
     isMigratingExistingInstallation ||
     hasStoredCredential === null ||
-    (isChecking && hasStoredCredential && !connection && !error)
+    (isStaffAuthenticated && isChecking && hasStoredCredential && !connection && !error)
   ) {
     return (
       <View
@@ -83,7 +125,7 @@ function AppConnectionGate() {
       >
         <StatusBar barStyle={theme.isDark ? 'light-content' : 'dark-content'} />
         <BrandLogo />
-        <ActivityIndicator color={theme.colors.success} size="small" />
+
       </View>
     );
   }
@@ -110,9 +152,37 @@ function AppConnectionGate() {
   }
 
   return (
-    <View style={{flex:1,backgroundColor:theme.colors.background}}>
-      {error && <View accessibilityRole="alert" style={{padding:12,backgroundColor:theme.colors.accentSoft,flexDirection:'row',alignItems:'center',gap:12}}><Text style={{flex:1,color:theme.colors.text}}>Offline · Cash sales are saved on this register. Card payments require a connection.</Text><Pressable accessibilityRole="button" onPress={()=>refresh().catch(()=>undefined)} disabled={isChecking} style={{minHeight:48,justifyContent:'center'}}><Text style={{color:theme.colors.accent}}>{isChecking?'Checking…':'Retry'}</Text></Pressable></View>}
-      <AppStripeTerminalProvider><AppRoot /></AppStripeTerminalProvider>
+    <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+      {error && (
+        <View
+          accessibilityRole="alert"
+          style={{
+            padding: 12,
+            backgroundColor: theme.colors.accentSoft,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 12,
+          }}
+        >
+          <Text style={{ flex: 1, color: theme.colors.text }}>
+            Offline · Cash sales are saved on this register. Card payments
+            require a connection.
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => refresh().catch(() => undefined)}
+            disabled={isChecking}
+            style={{ minHeight: 48, justifyContent: 'center' }}
+          >
+            <Text style={{ color: theme.colors.accent }}>
+              {isChecking ? 'Checking…' : 'Retry'}
+            </Text>
+          </Pressable>
+        </View>
+      )}
+      <AppStripeTerminalProvider>
+        <AppRoot />
+      </AppStripeTerminalProvider>
     </View>
   );
 }

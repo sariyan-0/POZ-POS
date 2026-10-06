@@ -1,3 +1,4 @@
+import { SkeletonRows } from '../components/Skeleton';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -133,6 +134,32 @@ export function DeveloperTerminalPanel() {
   const [province, setProvince] = useState('');
   const [postalCode, setPostalCode] = useState('');
   const [country, setCountry] = useState('CA');
+  const [pendingLocationId, setPendingLocationId] = useState<string | null>(
+    null,
+  );
+  const [locationActionBusy, setLocationActionBusy] = useState(false);
+  const [locationActionError, setLocationActionError] = useState<string | null>(
+    null,
+  );
+  const locationActionRef = useRef(false);
+  async function runLocationAction(action: () => Promise<void>) {
+    if (locationActionRef.current) return;
+    locationActionRef.current = true;
+    setLocationActionBusy(true);
+    setLocationActionError(null);
+    try {
+      await action();
+    } catch (error) {
+      setLocationActionError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to set up this location. Try again.',
+      );
+    } finally {
+      locationActionRef.current = false;
+      setLocationActionBusy(false);
+    }
+  }
 
   const selectedLocation = useMemo(
     () =>
@@ -164,7 +191,7 @@ export function DeveloperTerminalPanel() {
   useEffect(() => {
     if (
       isStripeReady &&
-      terminal.status === 'ready' &&
+      terminal.isReady &&
       !terminal.connectedReader &&
       terminal.connectionStatus === 'notConnected' &&
       !hasPreferredReader &&
@@ -178,7 +205,8 @@ export function DeveloperTerminalPanel() {
     terminal.connectedReader,
     terminal.connectionStatus,
     hasPreferredReader,
-    terminal.status,
+    terminal.isReady,
+    terminal.terminalConfig.locationId,
     terminal.terminalConfig.readerMode,
     isStripeReady,
   ]);
@@ -226,10 +254,12 @@ export function DeveloperTerminalPanel() {
     setConnectingReaderId('');
     setShowCreateLocation(false);
     setShowAdvancedLocation(false);
+    setLocationActionError(null);
     setStep('type');
   }
 
   function closeSetup() {
+    if (locationActionBusy) return;
     if (
       terminal.connectionStatus === 'connecting' ||
       terminal.connectionStatus === 'reconnecting' ||
@@ -241,6 +271,7 @@ export function DeveloperTerminalPanel() {
     if (updateIsVisible) {
       return;
     }
+    terminal.cancelDiscovery().catch(() => undefined);
     setStep(null);
     setShowCreateLocation(false);
     setShowAdvancedLocation(false);
@@ -267,7 +298,7 @@ export function DeveloperTerminalPanel() {
       terminal.connectionStatus === 'connected' ||
       terminal.connectionStatus === 'reconnecting'
     ) {
-      await terminal.disconnectReader().catch(() => undefined);
+      await terminal.disconnectReader();
     }
 
     await terminal.saveTerminalConfig({
@@ -278,16 +309,20 @@ export function DeveloperTerminalPanel() {
       preferredReaderLabel: '',
       preferredDiscoveryMethod: '',
     });
-    setStep('location');
-    terminal.refreshLocations().catch(() => undefined);
+    openLocations();
   }
 
   async function chooseLocation(
     location: ReturnType<typeof useAppStripeTerminal>['locations'][number],
   ) {
     if (!isStripeReady) return;
-    await terminal.selectLocation(location);
-    await startDiscovery();
+    setPendingLocationId(location.id);
+    try {
+      await terminal.selectLocation(location);
+      startDiscovery();
+    } finally {
+      setPendingLocationId(null);
+    }
   }
 
   async function applyManualLocation() {
@@ -300,7 +335,7 @@ export function DeveloperTerminalPanel() {
       locationDisplayName: 'Manual location',
       locationAddressSummary: locationId,
     });
-    await startDiscovery();
+    startDiscovery();
   }
 
   async function createAndUseLocation() {
@@ -323,13 +358,34 @@ export function DeveloperTerminalPanel() {
     setProvince('');
     setPostalCode('');
     setShowCreateLocation(false);
-    await startDiscovery();
+    startDiscovery();
   }
 
-  async function startDiscovery() {
+  function openLocations() {
+    if (step === 'discovery') terminal.cancelDiscovery().catch(() => undefined);
+    setLocationActionError(null);
+    setStep('location');
+    if (
+      terminal.locationsStatus === 'idle' ||
+      terminal.locationsStatus === 'error'
+    ) {
+      terminal.refreshLocations().catch(() => undefined);
+    }
+  }
+
+  function changeReaderType() {
+    terminal.cancelDiscovery().catch(() => undefined);
+    setStep('type');
+  }
+
+  async function startDiscovery(mode: ReaderMode = selectedMode) {
     if (!isStripeReady) return;
+    if (mode === 'tap_to_pay') {
+      connectReader('tap-to-pay', 'Tap to Pay').catch(() => undefined);
+      return;
+    }
     setStep('discovery');
-    await terminal.discoverReaders().catch(() => undefined);
+    terminal.discoverReaders().catch(() => undefined);
   }
 
   async function connectReader(readerId: string, label: string) {
@@ -638,7 +694,7 @@ export function DeveloperTerminalPanel() {
               cancelling={isCancellingConnection}
               onCancel={() => cancelConnection().catch(() => undefined)}
               onRetry={retryConnection}
-              onBack={() => setStep('discovery')}
+              onBack={changeReaderType}
             />
           ) : step === 'success' ? (
             <ConnectionStateScreen
@@ -663,6 +719,7 @@ export function DeveloperTerminalPanel() {
               <FlowHeader
                 currentStep={step === 'type' ? 1 : step === 'location' ? 2 : 3}
                 onClose={closeSetup}
+                disabled={locationActionBusy}
               />
 
               {step === 'type' ? (
@@ -776,10 +833,12 @@ export function DeveloperTerminalPanel() {
                   <PrimaryButton
                     label="Continue"
                     icon="arrow-right"
-                    onPress={() =>
-                      continueFromReaderType().catch(() => undefined)
-                    }
+                    disabled={locationActionBusy || !terminal.isReady}
+                    onPress={() => runLocationAction(continueFromReaderType)}
                   />
+                  {locationActionError && (
+                    <InlineError message={locationActionError} />
+                  )}
                 </View>
               ) : step === 'location' ? (
                 <View style={styles.flowSection}>
@@ -805,16 +864,22 @@ export function DeveloperTerminalPanel() {
                     </Text>
                   </View>
 
-                  {terminal.locationsStatus === 'loading' &&
-                  !terminal.locations.length ? (
-                    <LoadingRow label="Loading your locations" />
-                  ) : (
+                  {!terminal.locations.length &&
+                  (terminal.locationsStatus === 'idle' ||
+                    terminal.locationsStatus === 'loading') ? (
+                    <SkeletonRows label="Loading your locations" count={3} />
+                  ) : terminal.locations.length ? (
                     <View style={styles.locationList}>
                       {terminal.locations.map(location => (
                         <Pressable
                           key={location.id}
+                          disabled={locationActionBusy}
+                          accessibilityState={{
+                            busy: locationActionBusy,
+                            disabled: locationActionBusy,
+                          }}
                           onPress={() =>
-                            chooseLocation(location).catch(() => undefined)
+                            runLocationAction(() => chooseLocation(location))
                           }
                           style={({ pressed }) => [
                             styles.locationRow,
@@ -851,22 +916,46 @@ export function DeveloperTerminalPanel() {
                                 { color: theme.colors.textMuted },
                               ]}
                             >
-                              {formatTerminalLocationAddress(location.address)}
+                              {pendingLocationId === location.id
+                                ? 'Saving location…'
+                                : formatTerminalLocationAddress(
+                                    location.address,
+                                  )}
                             </Text>
                           </View>
-                          <MaterialDesignIcons
-                            color={theme.colors.textMuted}
-                            name="chevron-right"
-                            size={24}
-                          />
+                          {pendingLocationId === location.id ? (
+                            <ActivityIndicator color={theme.colors.accent} />
+                          ) : (
+                            <MaterialDesignIcons
+                              color={theme.colors.textMuted}
+                              name="chevron-right"
+                              size={24}
+                            />
+                          )}
                         </Pressable>
                       ))}
                     </View>
-                  )}
-
-                  {terminal.locationsError ? (
-                    <InlineError message={terminal.locationsError} />
                   ) : null}
+
+                  {locationActionError && (
+                    <InlineError message={locationActionError} />
+                  )}
+                  {terminal.locationsError ? (
+                    <>
+                      <InlineError message={terminal.locationsError} />
+                      <SecondaryButton
+                        label="Retry loading locations"
+                        onPress={() => terminal.refreshLocations()}
+                      />
+                    </>
+                  ) : null}
+                  {terminal.locationsStatus === 'ready' &&
+                    !terminal.locations.length && (
+                      <Text style={{ color: theme.colors.textMuted }}>
+                        No reader locations configured yet. Add a payment
+                        location below.
+                      </Text>
+                    )}
                   <Pressable
                     onPress={() => setShowCreateLocation(current => !current)}
                     style={styles.textAction}
@@ -944,16 +1033,19 @@ export function DeveloperTerminalPanel() {
                         </View>
                       </View>
                       <PrimaryButton
-                        label="Save and continue"
+                        label={
+                          locationActionBusy
+                            ? 'Setting up location…'
+                            : 'Save and continue'
+                        }
                         disabled={
+                          locationActionBusy ||
                           !newLocationName.trim() ||
                           !line1.trim() ||
                           !city.trim() ||
                           !country.trim()
                         }
-                        onPress={() =>
-                          createAndUseLocation().catch(() => undefined)
-                        }
+                        onPress={() => runLocationAction(createAndUseLocation)}
                       />
                     </View>
                   ) : null}
@@ -992,17 +1084,24 @@ export function DeveloperTerminalPanel() {
                         placeholder="tml_..."
                       />
                       <PrimaryButton
-                        label="Use this location"
-                        disabled={!manualLocationId.trim()}
-                        onPress={() =>
-                          applyManualLocation().catch(() => undefined)
+                        label={
+                          locationActionBusy
+                            ? 'Setting up location…'
+                            : 'Use this location'
                         }
+                        disabled={
+                          locationActionBusy || !manualLocationId.trim()
+                        }
+                        onPress={() => runLocationAction(applyManualLocation)}
                       />
                     </View>
                   ) : null}
                   <SecondaryButton
                     label="Back"
-                    onPress={() => setStep('type')}
+                    disabled={locationActionBusy}
+                    onPress={() => {
+                      if (!locationActionBusy) setStep('type');
+                    }}
                   />
                 </View>
               ) : (
@@ -1027,6 +1126,9 @@ export function DeveloperTerminalPanel() {
                       {terminal.discoveryStatus === 'discovering'
                         ? 'Searching now. Keep the reader powered on and close to this register.'
                         : 'Select the reader you want to connect.'}
+                      {terminal.terminalConfig.locationDisplayName
+                        ? `\n${terminal.terminalConfig.locationDisplayName}`
+                        : ''}
                     </Text>
                   </View>
 
@@ -1087,7 +1189,7 @@ export function DeveloperTerminalPanel() {
                   {terminal.discoveryError ? (
                     <InlineError message={terminal.discoveryError} />
                   ) : null}
-                  {terminal.discoveryStatus !== 'discovering' &&
+                  {terminal.discoveryStatus === 'empty' &&
                   !terminal.discoveredReaders.length &&
                   selectedMode !== 'tap_to_pay' ? (
                     <View
@@ -1119,19 +1221,20 @@ export function DeveloperTerminalPanel() {
                       </Text>
                     </View>
                   ) : null}
-                  <PrimaryButton
-                    label={
-                      terminal.discoveryStatus === 'discovering'
-                        ? 'Searching…'
-                        : 'Search again'
-                    }
-                    disabled={terminal.discoveryStatus === 'discovering'}
-                    icon="refresh"
-                    onPress={() => startDiscovery().catch(() => undefined)}
-                  />
+                  {terminal.discoveryStatus !== 'discovering' && (
+                    <PrimaryButton
+                      label="Search again"
+                      icon="refresh"
+                      onPress={() => startDiscovery().catch(() => undefined)}
+                    />
+                  )}
                   <SecondaryButton
                     label="Change location"
-                    onPress={() => setStep('location')}
+                    onPress={openLocations}
+                  />
+                  <SecondaryButton
+                    label="Change reader type"
+                    onPress={changeReaderType}
                   />
                 </View>
               )}
@@ -1146,9 +1249,11 @@ export function DeveloperTerminalPanel() {
 function FlowHeader({
   currentStep,
   onClose,
+  disabled = false,
 }: {
   currentStep: number;
   onClose: () => void;
+  disabled?: boolean;
 }) {
   const theme = useAppTheme();
   return (
@@ -1171,8 +1276,16 @@ function FlowHeader({
       </View>
       <Pressable
         accessibilityLabel="Close reader setup"
+        accessibilityState={{ disabled }}
+        disabled={disabled}
         onPress={onClose}
-        style={[styles.closeButton, { backgroundColor: theme.colors.surface }]}
+        style={[
+          styles.closeButton,
+          {
+            backgroundColor: theme.colors.surface,
+            opacity: disabled ? 0.45 : 1,
+          },
+        ]}
       >
         <MaterialDesignIcons color={theme.colors.text} name="close" size={22} />
       </Pressable>
@@ -1672,6 +1785,10 @@ function LoadingRow({ label }: { label: string }) {
   const theme = useAppTheme();
   return (
     <View
+      accessibilityRole="progressbar"
+      accessibilityLabel={label}
+      accessibilityState={{ busy: true }}
+      accessibilityLiveRegion="polite"
       style={[styles.loadingRow, { backgroundColor: theme.colors.surface }]}
     >
       <ActivityIndicator color={theme.colors.success} />

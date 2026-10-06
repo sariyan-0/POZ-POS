@@ -42,6 +42,7 @@ export async function fetchStaff(): Promise<{ staff: StaffMember[]; syncedAt: st
       pinSalt: typeof entry.pinSalt === 'string' ? entry.pinSalt : '',
       ...(typeof entry.pinSet === 'boolean' ? { pinSet: entry.pinSet } : {}),
       active: entry.active === true,
+      updatedAt: typeof entry.updatedAt === 'string' ? entry.updatedAt : undefined,
     }];
   });
   return { staff, syncedAt: typeof data.syncedAt === 'string' ? data.syncedAt : new Date().toISOString() };

@@ -12,7 +12,7 @@ function randomSalt(length = 16): string {
   return result;
 }
 
-function sha256(ascii: string): string {
+export function sha256(ascii: string): string {
   const rightRotate = (value: number, amount: number) =>
     (value >>> amount) | (value << (32 - amount));
   const mathPow = Math.pow;

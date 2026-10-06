@@ -3,6 +3,8 @@ export const apiConfig = {
     health: '/api/health',
     verifyDeviceActivation: '/api/devices/verify-activation',
     claimDevice: '/api/devices/claim',
+    startAccountLogin: '/api/devices/account-login/start',
+    accountLogin: '/api/devices/account-login',
     currentDevice: '/api/devices/current',
     terminalConnectionToken: '/api/terminal/connection-token',
     terminalLocations: '/api/terminal/locations',

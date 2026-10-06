@@ -37,6 +37,7 @@ import { setDisplayCurrency } from '../utils/format';
 import { capMoneyAmountInCents } from '../utils/money';
 import { createPinCredentials, verifyPin } from '../utils/pin';
 import { staffSession } from '../services/api/StaffSession';
+import { offlineStaffUnlock } from '../services/api/OfflineStaffUnlock';
 import { apiClient } from '../services/api/ApiClient';
 import { saveTax, saveDiscount, saveModifierSet, saveProduct, archiveProduct } from '../services/api/catalogMutations';
 import { calculateCartTotals, createSaleSnapshot } from '../utils/tax';
@@ -1246,6 +1247,7 @@ export function POSProvider({ children }: PropsWithChildren) {
       const scope=await storageScope();
       const result = await fetchStaff();
       if(scope!==await storageScope())return;
+      await offlineStaffUnlock.reconcile(result.staff);
       dispatch({ type: 'reconcileStaff', payload: { staff: result.staff } });
       lastStaffSyncAtRef.current = result.syncedAt;
       setLastStaffSyncAt(result.syncedAt);
@@ -1616,12 +1618,20 @@ export function POSProvider({ children }: PropsWithChildren) {
         }),
       unlockWithPin: async (pin, staffId) => {
         const localMatch = isTestRuntime ? findStaffForPin(state.staffMembers, pin, staffId) : null;
-        const matchedStaff = localMatch ?? (await verifyStaffPin(pin));
+        const scope = await storageScope();
+        const cachedMatch = localMatch ? null : await offlineStaffUnlock.unlock(pin, state.staffMembers, staffId);
+        const matchedStaff = localMatch ?? cachedMatch ?? (await verifyStaffPin(pin));
+        if (scope !== await storageScope()) { staffSession.clear(); return null; }
         if (staffId && matchedStaff.id !== staffId) {
+          staffSession.clear();
           return null;
         }
         if (!matchedStaff) {
           return null;
+        }
+        if (!localMatch && !cachedMatch) {
+          const known = state.staffMembers.find(person => person.id === matchedStaff.id);
+          await offlineStaffUnlock.remember(pin, { ...matchedStaff, updatedAt: known?.updatedAt }).catch(() => undefined);
         }
         dispatch({
           type: 'unlockWithPin',

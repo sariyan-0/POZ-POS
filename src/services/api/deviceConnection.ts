@@ -230,12 +230,24 @@ export async function verifyDeviceActivation(
   }
 }
 
-async function getInstallationId() {
+export async function getInstallationId() {
   const existing = await AsyncStorage.getItem(INSTALLATION_ID_KEY);
   if (existing) return existing;
   const created = createId('register');
   await AsyncStorage.setItem(INSTALLATION_ID_KEY, created);
   return created;
+}
+
+export async function connectWithAccountToken(data: ClaimResponse['data']) {
+  await backendConfigService.saveServerUrl(DEFAULT_BACKEND_URL);
+  await authCredentialStore.setCredential(data.token);
+  await terminalConfigService.reset();
+  const connection = {
+    device: data.device,
+    business: { ...data.business, stripeConnected: false },
+  } satisfies ConnectedDevice;
+  await saveCachedConnection(connection);
+  return connection;
 }
 
 export async function claimDevice(input: { activation: string; name: string }) {
