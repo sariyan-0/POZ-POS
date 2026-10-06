@@ -4,10 +4,11 @@ import {
   BackendNotConfiguredError,
   isConfiguredBackendUrl,
 } from '../../config/backend';
+import { staffSession } from './StaffSession';
 import { apiConfig } from '../../config/api';
 import { authCredentialStore } from './AuthCredentialStore';
 
-type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 type RequestOptions = {
   body?: unknown;
@@ -52,7 +53,7 @@ function isCompatibleHealthPayload(
 
   const dataRecord = data as Record<string, unknown>;
   return (
-    dataRecord.status === 'ok' &&
+    (dataRecord.status === 'ok' || dataRecord.status === 'operational') &&
     dataRecord.service === 'OneRegister' &&
     dataRecord.apiVersion === 1
   );
@@ -61,14 +62,19 @@ function isCompatibleHealthPayload(
 async function withTimeout<T>(
   timeoutMs: number,
   callback: (signal: AbortSignal) => Promise<T>,
+  externalSignal?: AbortSignal,
 ): Promise<T> {
   const controller = new AbortController();
+  const abortExternal=()=>controller.abort();
+  if(externalSignal?.aborted)controller.abort();
+  externalSignal?.addEventListener('abort',abortExternal);
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     return await callback(controller.signal);
   } finally {
     clearTimeout(timeout);
+    externalSignal?.removeEventListener('abort',abortExternal);
   }
 }
 
@@ -84,9 +90,12 @@ function isAbortError(error: unknown): boolean {
 export class HttpResponseError extends Error {
   readonly status: number;
   readonly payload: unknown;
+  readonly retryAfterMs: number;
 
-  constructor(status: number, payload: unknown) {
-    super(`Request failed with status ${status}`);
+  constructor(status: number, payload: unknown, retryAfterMs = 0) {
+    const message = payload && typeof payload === 'object' && 'error' in payload && payload.error && typeof payload.error === 'object' && 'message' in payload.error ? String(payload.error.message) : `Request failed with status ${status}`;
+    super(message);
+    this.retryAfterMs = retryAfterMs;
     this.name = 'HttpResponseError';
     this.status = status;
     this.payload = payload;
@@ -106,6 +115,10 @@ class ApiClient {
 
   async put<T>(path: string, body?: unknown, options?: Omit<RequestOptions, 'body'>): Promise<T> {
     return this.request<T>('PUT', path, { ...options, body });
+  }
+
+  async patch<T>(path: string, body?: unknown, options?: Omit<RequestOptions, 'body'>): Promise<T> {
+    return this.request<T>('PATCH', path, { ...options, body });
   }
 
   async delete<T>(path: string, options?: Omit<RequestOptions, 'body'>): Promise<T> {
@@ -168,7 +181,7 @@ class ApiClient {
     const headers = await this.buildHeaders(
       options.headers,
       options.body,
-      options.authTokenOverride,
+      options.authTokenOverride ?? (options.baseUrlOverride ? '' : undefined),
     );
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
 
@@ -177,8 +190,8 @@ class ApiClient {
         const response = await fetch(url, {
           method,
           headers,
-          body: options.body === undefined ? undefined : JSON.stringify(options.body),
-          signal: options.signal ?? signal,
+          body: options.body === undefined ? undefined : options.body instanceof FormData ? options.body : JSON.stringify(options.body),
+          signal,
         });
 
         const contentType = response.headers.get('content-type') ?? '';
@@ -186,11 +199,13 @@ class ApiClient {
         const payload = isJson ? await response.json() : await response.text();
 
         if (!response.ok) {
-          throw new HttpResponseError(response.status, payload);
+          const retryAfter = response.headers.get('retry-after');
+          const retryAfterMs = retryAfter ? (/^\d+$/.test(retryAfter) ? Number(retryAfter) * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now())) : 0;
+          throw new HttpResponseError(response.status, payload, retryAfterMs);
         }
 
         return payload as T;
-      });
+      },options.signal);
     } catch (error) {
       if (error instanceof BackendNotConfiguredError) {
         throw error;
@@ -227,7 +242,7 @@ class ApiClient {
       ...headers,
     };
 
-    if (body !== undefined) {
+    if (body !== undefined && !(body instanceof FormData)) {
       nextHeaders['Content-Type'] = 'application/json';
     }
 
@@ -240,6 +255,10 @@ class ApiClient {
       nextHeaders.Authorization = `Bearer ${token}`;
     }
 
+    const staff = staffSession.current();
+    const approval = staffSession.approval();
+    if (authTokenOverride === undefined && staff && !nextHeaders['x-staff-authorization']) nextHeaders['x-staff-authorization'] = staff.token;
+    if (authTokenOverride === undefined && approval && !nextHeaders['x-staff-approval']) nextHeaders['x-staff-approval'] = approval.token;
     return nextHeaders;
   }
 }

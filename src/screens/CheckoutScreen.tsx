@@ -398,7 +398,7 @@ export function CheckoutScreen() {
   }
 
   function handleDiscountPress(discount: Discount) {
-    if (!hasPermission('apply_discounts', currentStaff) || (discount.requirePasscode && currentStaff?.role === 'cashier')) {
+    if (!hasPermission('apply_discounts', currentStaff) || discount.requirePasscode) {
       setRestrictedDiscount(discount);
       setShowDiscountAuth(false);
       setManagerPin('');
@@ -1144,7 +1144,7 @@ export function CheckoutScreen() {
             ) : (
               <>
                 <Text style={[styles.restrictedDiscountTitle, { color: theme.colors.text }]}>
-                  Enter manager PIN
+                  Enter approval PIN
                 </Text>
                 <Animated.View
                   style={[styles.discountPinDots, { transform: [{ translateX: shake }] }]}>

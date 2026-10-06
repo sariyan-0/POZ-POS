@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { AppScreen, EmptyNotice, Thumbnail } from '../components/POSUI';
 import { usePOS } from '../hooks/usePOS';
@@ -7,14 +7,18 @@ import { useAppTheme } from '../theme';
 export function InventoryScreen() {
   const { state, adjustInventory } = usePOS();
   const theme = useAppTheme();
+  const [error,setError]=useState<string|null>(null);
+  const [busy,setBusy]=useState(false);
+  async function adjust(id:string,delta:number){if(busy)return;setBusy(true);setError(null);try{await adjustInventory(id,delta);}catch(cause){setError(cause instanceof Error?cause.message:"Unable to update stock.");}finally{setBusy(false);}}
 
   return (
     <AppScreen
       title="Inventory"
       subtitle="Manual stock adjustment for tracked items.">
-      {state.products.length ? (
+      {error&&<Text accessibilityRole="alert" style={{color:theme.colors.danger}}>{error}</Text>}
+      {state.products.filter(product=>product.trackInventory).length ? (
         <View style={{ backgroundColor: theme.colors.surface }}>
-          {state.products.map(product => (
+          {state.products.filter(product=>product.trackInventory).map(product => (
             <View
               key={product.id}
               style={[styles.row, { borderBottomColor: theme.colors.divider }]}>
@@ -36,11 +40,11 @@ export function InventoryScreen() {
                 <View style={styles.controls}>
                   <CounterButton
                     label="-1"
-                    onPress={() => adjustInventory(product.id, -1)}
+                    onPress={() => adjust(product.id, -1)}
                   />
                   <CounterButton
                     label="+1"
-                    onPress={() => adjustInventory(product.id, 1)}
+                    onPress={() => adjust(product.id, 1)}
                   />
                 </View>
               </View>
@@ -97,7 +101,7 @@ const styles = StyleSheet.create({
   },
   counterButton: {
     minWidth: 44,
-    minHeight: 28,
+    minHeight: 48,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',

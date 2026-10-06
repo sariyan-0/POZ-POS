@@ -90,7 +90,7 @@ export function CheckoutDiscountsScreen() {
           <Pressable
             key={discount.id}
             onPress={() => {
-              if (!hasPermission('apply_discounts', currentStaff) || (discount.requirePasscode && currentStaff?.role === 'cashier')) {
+              if (!hasPermission('apply_discounts', currentStaff) || discount.requirePasscode) {
                 setRestrictedDiscount(discount);
                 setShowDiscountAuth(false);
                 return;
@@ -184,7 +184,7 @@ export function CheckoutDiscountsScreen() {
             ) : (
               <>
                 <Text style={[styles.modalTitle, { color: theme.colors.text }]}>
-                  Enter manager PIN
+                  Enter approval PIN
                 </Text>
                 <Animated.View
                   style={[styles.pinDots, { transform: [{ translateX: shake }] }]}>

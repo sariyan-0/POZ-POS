@@ -8,7 +8,8 @@ import { Transaction } from '../models/pos';
 import { useRootNavigation } from '../navigation/AppNavigator';
 import { useAppTheme } from '../theme';
 import { formatCurrency, formatDateTime } from '../utils/format';
-import { recordTransaction } from '../services/api/transactions';
+import { retryStoredSales } from '../storage/persistence';
+import { flushTransactionOutbox } from '../services/transactionOutbox';
 
 export function TransactionsScreen() {
   const { state, updateTransactionSync, syncCustomers } = usePOS();
@@ -18,24 +19,8 @@ export function TransactionsScreen() {
 
   async function retryPendingTransactions() {
     setSyncing(true);
-    const pending = state.transactions.filter(transaction => transaction.serverSyncStatus !== 'synced');
-    await Promise.all(pending.map(async transaction => {
-      try {
-        const order = await recordTransaction(transaction);
-        updateTransactionSync(transaction.id, {
-          serverSyncStatus: 'synced',
-          serverOrderId: order.id,
-          serverOrderNumber: order.order_number,
-          serverSyncError: undefined,
-          syncedAt: new Date().toISOString(),
-        });
-      } catch (error) {
-        updateTransactionSync(transaction.id, {
-          serverSyncStatus: 'failed',
-          serverSyncError: error instanceof Error ? error.message : 'Unable to sync transaction.',
-        });
-      }
-    }));
+    await retryStoredSales();
+    await flushTransactionOutbox(sale => updateTransactionSync(sale.id, sale));
     await syncCustomers().catch(() => undefined);
     setSyncing(false);
   }
@@ -62,7 +47,7 @@ export function TransactionsScreen() {
       ) : (
         <EmptyNotice
           title="No transactions yet"
-          body="Complete a mock charge from Checkout to populate this list."
+          body="Complete a cash or card sale from Checkout."
         />
       )}
     </AppScreen>
@@ -111,7 +96,7 @@ function TransactionRow({
             </Text>
             {transaction.serverSyncStatus !== 'synced' ? (
               <Text style={[styles.syncState, { color: transaction.serverSyncStatus === 'failed' ? theme.colors.danger : theme.colors.textMuted }]}>
-                {transaction.serverSyncStatus === 'failed' ? 'Saved offline · pull to retry' : 'Syncing'}
+                {transaction.serverSyncStatus === 'failed' ? 'Needs review · pull to retry' : 'Saved locally · pending sync'}
               </Text>
             ) : null}
           </View>

@@ -99,7 +99,9 @@ export function ProductEditorScreen() {
   const scrollViewRef = useRef<any>(null);
   const descriptionEditorRef = useRef<RichEditor>(null);
 
-  const saveDisabled = !product.name.trim();
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const saveDisabled = isSaving || !product.name.trim();
   const isEditing = !!existingProduct;
   const readyButtonBackground = theme.isDark ? '#FFFFFF' : '#111214';
   const readyButtonText = theme.isDark ? '#111214' : '#FFFFFF';
@@ -140,13 +142,15 @@ export function ProductEditorScreen() {
     }));
   }
 
-  function saveProduct() {
+  async function saveProduct() {
     if (saveDisabled) {
       return;
     }
 
     const trimmedName = product.name.trim();
-    upsertProduct({
+    setIsSaving(true); setSaveError(null);
+    try {
+    await upsertProduct({
       ...product,
       name: trimmedName,
       description: product.description.trim(),
@@ -163,16 +167,16 @@ export function ProductEditorScreen() {
       ).toUpperCase(),
     });
     navigation.goBack();
+    } catch (cause) { setSaveError(cause instanceof Error ? cause.message : "Unable to save. Your draft is retained."); if (cause && typeof cause === "object" && "savedProductId" in cause && typeof cause.savedProductId === "string") setProduct(current=>({...current,id:cause.savedProductId as string})); } finally { setIsSaving(false); }
   }
 
-  function removeProduct() {
+  async function removeProduct() {
     if (!existingProduct) return;
     if (!confirmDelete) {
       setConfirmDelete(true);
       return;
     }
-    deleteProduct(existingProduct.id);
-    navigation.goBack();
+    try { await deleteProduct(existingProduct.id); navigation.goBack(); } catch (cause) { setSaveError(cause instanceof Error ? cause.message : "Unable to archive item."); }
   }
 
   const selectedTaxNames = state.settings.business.taxDefinitions
@@ -431,6 +435,7 @@ export function ProductEditorScreen() {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
+        {saveError && <Text accessibilityRole="alert" style={{color:theme.colors.danger,padding:16}}>{saveError}</Text>}
         <View
           style={[styles.topBar, { borderBottomColor: theme.colors.border }]}
         >

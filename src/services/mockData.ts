@@ -2,25 +2,18 @@ import { AppSettings, POSState } from '../models/pos';
 
 export const defaultSettings: AppSettings = {
   business: {
-    businessName: 'Powers of Zero',
+    businessName: 'OneRegister',
     currency: 'CAD',
-    defaultTaxRate: 13,
-    taxDefinitions: [
-      {
-        id: 'tax-hst',
-        name: 'HST',
-        rate: 13,
-        enabled: true,
-      },
-    ],
+    defaultTaxRate: 0,
+    taxDefinitions: [],
   },
   hardware: {
-    readerLabel: 'WisePad 3',
-    readerStatus: 'Connected',
-    readerBatteryLevel: 87,
+    readerLabel: 'No reader',
+    readerStatus: 'Disconnected',
+    readerBatteryLevel: 0,
   },
   appearanceMode: 'system',
-  mockPaymentMode: true,
+  mockPaymentMode: false,
 };
 
 export const initialPOSState: POSState = {

@@ -26,9 +26,11 @@ import {
   getTerminalPaymentPreconditionError,
   TerminalPaymentDebugSummary,
 } from '../services/api/terminalPaymentIntents';
-import { paymentService } from '../services/payment';
 import { useAppStripeTerminal } from '../terminal/StripeTerminalProvider';
-import { recordTransaction } from '../services/api/transactions';
+import { staffSession } from '../services/api/StaffSession';
+import { calculateCartTotals, createSaleSnapshot } from '../utils/tax';
+import { loadPaymentAttempts, storePaymentAttempt, removePaymentAttempt } from '../storage/persistence';
+import { flushTransactionOutbox } from '../services/transactionOutbox';
 import { useAppTheme } from '../theme';
 import { createId } from '../utils/id';
 import { formatCurrency } from '../utils/format';
@@ -205,8 +207,6 @@ export function MockPaymentScreen() {
   const navigation = useRootNavigation();
   const {
     total,
-    subtotal,
-    tax,
     state,
     selectedCustomer,
     createApprovedTransaction,
@@ -242,26 +242,7 @@ export function MockPaymentScreen() {
 
   function syncRecordedTransaction(transaction: Transaction | null) {
     if (!transaction) return;
-    recordTransaction(transaction)
-      .then(order => {
-        updateTransactionSync(transaction.id, {
-          serverSyncStatus: 'synced',
-          serverOrderId: order.id,
-          serverOrderNumber: order.order_number,
-          serverSyncError: undefined,
-          syncedAt: new Date().toISOString(),
-        });
-        syncCustomers().catch(() => undefined);
-      })
-      .catch(error => {
-        updateTransactionSync(transaction.id, {
-          serverSyncStatus: 'failed',
-          serverSyncError:
-            error instanceof Error
-              ? error.message
-              : 'Unable to sync transaction.',
-        });
-      });
+    flushTransactionOutbox(sale => updateTransactionSync(sale.id, sale)).then(()=>syncCustomers()).catch(()=>undefined);
   }
 
   const displayAmountCents =
@@ -360,8 +341,8 @@ export function MockPaymentScreen() {
       method === 'card_reader' || method === 'tap_to_pay';
     attemptRef.current += 1;
     const token = attemptRef.current;
-    const saleAmountAtStart = total;
-    const saleCurrencyAtStart = state.settings.business.currency;
+    let saleAmountAtStart = total;
+    let saleCurrencyAtStart = state.settings.business.currency;
     setSelectedMethod(method);
     setPhase('waiting');
     setPhaseMessage('');
@@ -397,7 +378,14 @@ export function MockPaymentScreen() {
           throw new Error(preconditionError);
         }
 
-        idempotencyKeyRef.current = createId('sale-attempt');
+        if (!idempotencyKeyRef.current) idempotencyKeyRef.current = createId('sale-attempt');
+        const existingAttempt=(await loadPaymentAttempts()).find(attempt=>attempt.id===idempotencyKeyRef.current);
+        const frozenState = existingAttempt?.payload.state as typeof state ?? state;
+        const frozenTotals=calculateCartTotals(frozenState);
+        saleAmountAtStart=frozenTotals.total; saleCurrencyAtStart=frozenState.settings.business.currency;
+        setPaymentAmountCents(saleAmountAtStart);setPaymentCurrency(saleCurrencyAtStart);
+        const authorization = {staffToken: staffSession.current()!.token, approvalToken:staffSession.approval()?.token};
+        await storePaymentAttempt(idempotencyKeyRef.current, { state: frozenState, authorization, localOrderId: idempotencyKeyRef.current, phase: 'creating' });
         failureStage = 'creating_intent';
         setPhaseMessage('Creating Stripe Terminal payment...');
 
@@ -406,12 +394,15 @@ export function MockPaymentScreen() {
           currency: saleCurrencyAtStart,
           idempotencyKey: idempotencyKeyRef.current,
           sale: {
-            subtotalInCents: subtotal,
-            taxInCents: tax,
+            localOrderId: idempotencyKeyRef.current,
+            saleSnapshot: createSaleSnapshot(frozenState),
+            catalogRevision: frozenState.settings.business.catalogRevision,
+            subtotalInCents: frozenTotals.subtotal,
+            taxInCents: frozenTotals.tax,
             totalInCents: saleAmountAtStart,
             currency: saleCurrencyAtStart,
             itemCount: state.cart.reduce((sum, item) => sum + item.quantity, 0),
-            items: state.cart.map(mapCartItemToBackendSaleItem),
+            items: frozenState.cart.map(mapCartItemToBackendSaleItem),
           },
           customer: selectedCustomer
             ? {
@@ -423,6 +414,8 @@ export function MockPaymentScreen() {
               }
             : undefined,
         });
+
+        await storePaymentAttempt(idempotencyKeyRef.current, { state: frozenState, authorization, localOrderId: idempotencyKeyRef.current, paymentIntentId: backendIntent.id, phase: 'collecting' });
 
         if (backendIntent.stripeCustomerId && selectedCustomer) {
           updateCustomerStripeId(
@@ -477,9 +470,10 @@ export function MockPaymentScreen() {
             : terminal.connectedReader?.deviceType ?? 'Bluetooth terminal';
 
         failureStage = 'recording_sale';
-        const transaction = createApprovedTransaction({
+        const transaction = await createApprovedTransaction({
           paymentMethod: method,
-          transactionReference: processedIntent.id,
+          transactionReference: idempotencyKeyRef.current,
+          frozenState,
           paymentProvider: 'stripe_terminal',
           processorReference: processedIntent.id,
           paymentDetails: {
@@ -505,6 +499,8 @@ export function MockPaymentScreen() {
             sourceLabel: 'Stripe Terminal',
           },
         });
+        if (!transaction) throw new Error("Payment was approved, but the sale requires recovery.");
+        await removePaymentAttempt(idempotencyKeyRef.current);
         syncRecordedTransaction(transaction);
         setTransactionId(
           transaction?.referenceCode ?? transaction?.id ?? processedIntent.id,
@@ -526,35 +522,7 @@ export function MockPaymentScreen() {
         return;
       }
 
-      const payment = await paymentService.createPayment(
-        {
-          amount: saleAmountAtStart,
-          currency: saleCurrencyAtStart,
-        },
-        method,
-      );
-      const processed = await paymentService.collectPayment(payment);
-
-      if (attemptRef.current !== token) {
-        return;
-      }
-
-      const transaction = createApprovedTransaction({
-        paymentMethod: method,
-        transactionReference: processed.transactionReference,
-        paymentProvider: 'mock',
-        processorReference: processed.paymentId,
-      });
-      syncRecordedTransaction(transaction);
-      setTransactionId(
-        transaction?.referenceCode ??
-          transaction?.id ??
-          processed.transactionReference,
-      );
-      setApprovedPayment({
-        sourceLabel: method === 'cash' ? 'Cash payment' : 'Mock payment',
-      });
-      setPhase('approved');
+      throw new Error('Choose cash from checkout or connect a Stripe Terminal reader.');
     } catch (error) {
       if (attemptRef.current === token) {
         const summary = describeTerminalPaymentError(error);
@@ -604,12 +572,7 @@ export function MockPaymentScreen() {
         return;
       }
 
-      await paymentService.cancelPayment({
-        id: 'cancelled',
-        amount: paymentAmountCents,
-        currency: paymentCurrency,
-        method: selectedMethod,
-      });
+
     }
   }
 
@@ -806,7 +769,7 @@ export function MockPaymentScreen() {
       {phase === 'cancelled' ? (
         <ResultCard
           title="Payment Cancelled"
-          body="The mock payment was cancelled before approval."
+          body="Payment collection was stopped. Check saved payment status before starting another sale."
           detail="Cart contents are still intact."
           actionLabel="Back to sale"
           onAction={() => navigation.goBack()}

@@ -57,7 +57,9 @@ export function ModifierSetEditorScreen() {
       : [{ id: createId('modrow'), name: '', price: '' }],
   );
 
-  const saveDisabled = !name.trim() || !modifierRows.some(row => row.name.trim());
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const saveDisabled = isSaving || !name.trim() || !modifierRows.some(row => row.name.trim());
   const normalizedDraftRows = modifierRows
     .filter(row => row.name.trim() || row.price.trim())
     .map(row => ({
@@ -138,7 +140,7 @@ export function ModifierSetEditorScreen() {
     });
   }
 
-  function save() {
+  async function save() {
     if (saveDisabled) {
       return;
     }
@@ -158,8 +160,11 @@ export function ModifierSetEditorScreen() {
         })),
     };
 
-    upsertModifierSet(payload);
+    setIsSaving(true); setSaveError(null);
+    try {
+    await upsertModifierSet(payload);
     navigation.goBack();
+    } catch (cause) { setSaveError(cause instanceof Error ? cause.message : "Unable to save. Your draft is retained."); } finally { setIsSaving(false); }
   }
 
   function handleClose() {
@@ -176,7 +181,8 @@ export function ModifierSetEditorScreen() {
 
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: theme.colors.surface }]}>
-      <View style={styles.header}>
+      {saveError && <Text accessibilityRole="alert" style={{color:theme.colors.danger,padding:16}}>{saveError}</Text>}
+        <View style={styles.header}>
         <Pressable
           onPress={handleClose}
           style={[styles.headerButton, { backgroundColor: theme.colors.surfaceMuted }]}>

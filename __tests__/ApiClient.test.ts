@@ -4,6 +4,7 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   removeItem: jest.fn(() => Promise.resolve()),
 }));
 
+import { backendConfigService } from '../src/config/BackendConfigService';
 import { apiClient } from '../src/services/api/ApiClient';
 import { authCredentialStore } from '../src/services/api/AuthCredentialStore';
 
@@ -25,9 +26,8 @@ describe('ApiClient', () => {
       text: async () => '',
     } as never);
 
-    await apiClient.get('/api/health', {
-      baseUrlOverride: 'https://backend.example',
-    });
+    await backendConfigService.saveServerUrl('https://backend.example');
+    await apiClient.get('/api/health');
 
     expect(fetchSpy).toHaveBeenCalledWith(
       'https://backend.example/api/health',

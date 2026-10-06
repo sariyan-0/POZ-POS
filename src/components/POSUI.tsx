@@ -268,7 +268,7 @@ export function SegmentedTabs({
                     backgroundColor: theme.colors.surface,
                     borderColor: theme.colors.border,
                     shadowColor: '#000000',
-                    shadowOpacity: 0.08,
+                    shadowOpacity: 0.04,
                     shadowRadius: 4,
                     shadowOffset: { width: 0, height: 1 },
                     elevation: 1,
@@ -542,7 +542,7 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   readerStatusLabel: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '800',
   },
   readerBatterySlot: {
@@ -574,7 +574,7 @@ export const styles = StyleSheet.create({
     borderBottomRightRadius: 2,
   },
   readerBatteryText: {
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: '800',
   },
   segmentedContainer: {

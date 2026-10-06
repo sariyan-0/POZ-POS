@@ -14,6 +14,7 @@ import {
 } from '@react-navigation/native-stack';
 import MaterialDesignIcons from '@react-native-vector-icons/material-design-icons/static';
 import { useAppTheme } from '../theme';
+import { TaxesScreen } from '../screens/TaxesScreen';
 import { MockPaymentScreen } from '../screens/MockPaymentScreen';
 import { CheckoutDiscountsScreen } from '../screens/CheckoutDiscountsScreen';
 import { MoreScreen } from '../screens/MoreScreen';
@@ -51,6 +52,7 @@ export type RootStackParamList = {
   Discounts: undefined;
   CheckoutDiscounts: undefined;
   Items: undefined;
+  Taxes: undefined;
   AllItems: undefined;
   Modifiers: undefined;
   ModifierSetEditor: { modifierSetId?: string } | undefined;
@@ -177,11 +179,11 @@ function MoreTabIcon({ color, size }: TabIconProps) {
   return <MaterialDesignIcons color={color} name="menu" size={size} />;
 }
 
-export function AppNavigator() {
+export function AppNavigator({onLeavePayment}:{onLeavePayment?:()=>void}) {
   const theme = useAppTheme();
 
   return (
-    <NavigationContainer theme={theme.navigationTheme}>
+    <NavigationContainer theme={theme.navigationTheme} onStateChange={state=>{if(state?.routes[state.index??0]?.name!=="MockPayment")onLeavePayment?.();}}>
       <Stack.Navigator
         initialRouteName="MainTabs"
         screenOptions={{
@@ -195,6 +197,7 @@ export function AppNavigator() {
           },
         }}
       >
+        <Stack.Screen name="Taxes" component={TaxesScreen} options={{ headerShown: false }} />
         <Stack.Screen
           name="OnboardingTour"
           component={OnboardingReplayScreen}

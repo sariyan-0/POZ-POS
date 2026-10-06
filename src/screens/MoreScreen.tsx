@@ -10,7 +10,7 @@ import { useAppTheme } from '../theme';
 export function MoreScreen() {
   const navigation = useRootNavigation();
   const theme = useAppTheme();
-  const { connection } = useDeviceConnection();
+  const { connection, error, isChecking } = useDeviceConnection();
   const { currentStaff, lockSession, state } = usePOS();
   const staffName = currentStaff?.name?.trim() || 'there';
   const businessName =
@@ -48,7 +48,7 @@ export function MoreScreen() {
               { color: theme.colors.accentText },
             ]}
           >
-            REGISTER ONLINE
+            {error ? 'REGISTER OFFLINE' : isChecking ? 'CHECKING CONNECTION' : 'REGISTER ONLINE'}
           </Text>
           <Text
             style={[styles.connectionTitle, { color: theme.colors.accentText }]}
@@ -115,7 +115,7 @@ export function MoreScreen() {
           label="Taxes"
           icon="percent-outline"
           onPress={() =>
-            navigation.navigate('MoreSection', { section: 'taxes' })
+            navigation.navigate('Taxes')
           }
         />
       </View>

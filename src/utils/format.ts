@@ -1,8 +1,10 @@
 import { CurrencyCode } from '../models/pos';
 
+let activeCurrency: CurrencyCode = 'CAD';
+export function setDisplayCurrency(currency: CurrencyCode) { activeCurrency = currency; }
 export function formatCurrency(
   amountInCents: number,
-  currency: CurrencyCode = 'CAD',
+  currency: CurrencyCode = activeCurrency,
 ): string {
   return new Intl.NumberFormat('en-CA', {
     style: 'currency',

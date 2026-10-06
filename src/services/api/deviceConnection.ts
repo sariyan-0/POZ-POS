@@ -8,6 +8,8 @@ import { terminalConfigService } from '../../terminal/TerminalConfigService';
 import { apiClient, HttpResponseError } from './ApiClient';
 import { authCredentialStore } from './AuthCredentialStore';
 
+const connectionListeners = new Set<() => void>();
+export function subscribeDeviceConnection(listener: () => void) { connectionListeners.add(listener); return () => { connectionListeners.delete(listener); }; }
 const INSTALLATION_ID_KEY = 'oneregister/device-installation-id/v1';
 const CONNECTION_CACHE_KEY = 'oneregister/device-connection/v1';
 
@@ -61,6 +63,7 @@ function isConnectedDevice(value: unknown): value is ConnectedDevice {
 
 async function saveCachedConnection(connection: ConnectedDevice) {
   await AsyncStorage.setItem(CONNECTION_CACHE_KEY, JSON.stringify(connection));
+  connectionListeners.forEach(listener => listener());
 }
 
 async function clearCachedConnection() {

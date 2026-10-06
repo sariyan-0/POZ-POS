@@ -1,6 +1,7 @@
 module.exports = {
   preset: '@react-native/jest-preset',
   setupFiles: ['<rootDir>/jest.setup.js'],
+  modulePaths: ['<rootDir>/node_modules'],
   moduleNameMapper: {
     '^@react-native/assets-registry/registry$':
       '<rootDir>/src/shims/reactNativeAssetsRegistry.js',

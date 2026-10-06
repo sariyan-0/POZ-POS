@@ -30,7 +30,8 @@ export function CurrentSaleScreen() {
   const navigation = useRootNavigation();
   const {
     state,
-    subtotal,
+    grossSubtotal,
+    discount,
     tax,
     taxLines,
     total,
@@ -200,9 +201,10 @@ export function CurrentSaleScreen() {
               Subtotal
             </Text>
             <Text style={[styles.summaryText, { color: theme.colors.textMuted }]}>
-              {formatCurrency(subtotal)}
+              {formatCurrency(grossSubtotal)}
             </Text>
           </View>
+          {discount > 0 && <View style={styles.summaryRow}><Text style={[styles.summaryText,{color:theme.colors.textMuted}]}>Discounts</Text><Text style={[styles.summaryText,{color:theme.colors.textMuted}]}>−{formatCurrency(discount)}</Text></View>}
           {taxLines.length ? (
             taxLines.map(taxLine => (
               <View key={taxLine.taxId} style={styles.summaryRow}>

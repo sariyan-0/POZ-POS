@@ -13,7 +13,9 @@ const assetRegistryShim = path.resolve(
 );
 
 const config = {
+  watchFolders: [path.resolve(__dirname, '../oneregister/packages/commerce-core')],
   resolver: {
+    nodeModulesPaths: [path.resolve(__dirname, 'node_modules')],
     resolveRequest: (context, moduleName, platform) => {
       if (moduleName === '@react-native/assets-registry/registry') {
         return {

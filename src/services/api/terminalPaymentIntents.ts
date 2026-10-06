@@ -3,7 +3,7 @@ import {
   BackendConnectionError,
   BackendNotConfiguredError,
 } from '../../config/backend';
-import { apiClient } from './ApiClient';
+import { apiClient, HttpResponseError } from './ApiClient';
 import {
   getSafeStripeError,
   STRIPE_SETUP_REQUIRED_MESSAGE,
@@ -35,6 +35,9 @@ export type BackendTerminalPaymentIntentSaleItem = {
 };
 
 export type BackendTerminalPaymentIntentSalePayload = {
+  saleSnapshot?: import('@oneregister/commerce-core').SaleInput;
+  catalogRevision?: string;
+  localOrderId?: string;
   subtotalInCents: number;
   taxInCents: number;
   totalInCents: number;
@@ -173,6 +176,8 @@ function readPaymentIntentPayload(
 }
 
 function isRetryablePaymentIntentError(error: unknown): boolean {
+  if (error instanceof HttpResponseError) return error.status >= 500;
+
   if (error instanceof BackendNotConfiguredError) {
     return false;
   }
@@ -390,7 +395,14 @@ export function describeTerminalPaymentError(error: unknown): TerminalPaymentDeb
 export async function createBackendTerminalPaymentIntent(
   payload: CreatePaymentIntentPayload,
 ): Promise<BackendTerminalPaymentIntent> {
+  let quoteId: string | undefined;
+  if (payload.sale.saleSnapshot) {
+    const quote = await apiClient.post<{ data: { quoteId: string; totalInCents: number } }>('/api/checkout/quote', { saleSnapshot: payload.sale.saleSnapshot, catalogRevision: payload.sale.catalogRevision, localOrderId: payload.sale.localOrderId ?? payload.idempotencyKey });
+    if (quote.data.totalInCents !== payload.amount) throw new Error('The sale changed. Review it before payment.');
+    quoteId = quote.data.quoteId;
+  }
   const body = {
+    quoteId,
     amount: payload.amount,
     currency: payload.currency.toLowerCase(),
     idempotencyKey: payload.idempotencyKey,

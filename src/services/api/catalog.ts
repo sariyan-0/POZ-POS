@@ -4,6 +4,8 @@ import {
   Product,
   ProductOptionSet,
   TaxDefinition,
+  BusinessSettings,
+  Discount,
 } from '../../models/pos';
 import { apiClient } from './ApiClient';
 
@@ -57,6 +59,8 @@ export async function fetchCatalog(): Promise<{
   taxDefinitions: TaxDefinition[];
   modifierSets: ModifierSet[];
   defaultTaxRate: number;
+  businessSettings: Partial<BusinessSettings>;
+  discounts: Discount[];
   syncedAt: string;
 }> {
   const payload = await apiClient.get<unknown>(apiConfig.endpoints.catalog, {
@@ -102,7 +106,10 @@ export async function fetchCatalog(): Promise<{
         typeof product.price_in_cents === 'number' ? product.price_in_cents : 0,
       unitType: product.unit_type === 'mass' ? 'mass' : 'item',
       massUnit: product.mass_unit === 'lb' ? 'lb' : 'kg',
-      currency: 'CAD',
+      currency: product.currency === 'usd' ? 'USD' : 'CAD',
+      categoryId,
+      updatedAt: typeof product.updated_at === 'string' ? product.updated_at : undefined,
+      taxBehavior: ['inclusive', 'exclusive', 'none'].includes(String(product.tax_behavior)) ? product.tax_behavior as 'inclusive' | 'exclusive' | 'none' : 'inherit',
       category: category?.name ?? 'Items',
       sku: typeof product.sku === 'string' ? product.sku : '',
       inventory:
@@ -133,7 +140,11 @@ export async function fetchCatalog(): Promise<{
           {
             id: tax.id,
             name: tax.name,
-            rate: typeof tax.rate_bps === 'number' ? tax.rate_bps / 100 : 0,
+            rate: typeof tax.rate_ppm === 'number' ? tax.rate_ppm / 10000 : typeof tax.rate_bps === 'number' ? tax.rate_bps / 100 : 0,
+            ratePpm: typeof tax.rate_ppm === 'number' ? tax.rate_ppm : undefined,
+            isDefault: tax.is_default === true,
+            archived: Boolean(tax.archived_at),
+            updatedAt: typeof tax.updated_at === 'string' ? tax.updated_at : undefined,
             enabled: tax.enabled === true,
           },
         ];
@@ -166,7 +177,7 @@ export async function fetchCatalog(): Promise<{
               ];
             })
           : [];
-        return [{ id: set.id, name: set.name, modifiers }];
+        return [{ id: set.id, name: set.name, modifiers, itemIds: products.filter(product=>product.modifierSetIds?.includes(set.id as string)).map(product=>product.id) }];
       })
     : [];
   const businessSettings =
@@ -176,6 +187,22 @@ export async function fetchCatalog(): Promise<{
 
   return {
     products,
+    businessSettings: {
+      settingsUpdatedAt: typeof businessSettings.settingsUpdatedAt==='string'?businessSettings.settingsUpdatedAt:undefined,
+      businessId: typeof businessSettings.businessId === 'string' ? businessSettings.businessId : undefined,
+      businessName: typeof businessSettings.name === 'string' ? businessSettings.name : undefined,
+      currency: businessSettings.currency === 'usd' ? 'USD' : 'CAD',
+      country: businessSettings.country === 'US' ? 'US' : 'CA',
+      pricesIncludeTax: businessSettings.pricesIncludeTax === true,
+      taxRegistrationNumber: typeof businessSettings.taxRegistrationNumber === 'string' ? businessSettings.taxRegistrationNumber : '',
+      receiptHeader: typeof businessSettings.receiptHeader === 'string' ? businessSettings.receiptHeader : '',
+      receiptFooter: typeof businessSettings.receiptFooter === 'string' ? businessSettings.receiptFooter : '',
+      catalogRevision: typeof data.catalogVersion === 'string' ? data.catalogVersion : undefined,
+    },
+    discounts: Array.isArray(data.discounts) ? data.discounts.map(value => {
+      const d = value as Record<string, unknown>;
+      return { id: String(d.id), name: String(d.name), type: d.type === 'percentage' ? 'percentage' : 'fixed', amount: Number(d.amount), active: d.active === true, requirePasscode: d.require_passcode === true, applyAfterTaxes: d.apply_after_taxes === true, updatedAt: String(d.updated_at) } as Discount;
+    }) : [],
     taxDefinitions,
     modifierSets,
     defaultTaxRate:

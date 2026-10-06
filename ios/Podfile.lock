@@ -83,6 +83,28 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
+  - op-sqlite (18.2.5):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-bridging
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
   - RCT-Folly (2024.11.18.00):
     - RCT-Folly/Default (= 2024.11.18.00)
     - ReactNativeDependencies
@@ -1963,6 +1985,7 @@ DEPENDENCIES:
   - hermes-engine (from `../node_modules/react-native/sdks/hermes-engine/hermes-engine.podspec`)
   - NitroDataScanner (from `../node_modules/react-native-data-scanner`)
   - NitroModules (from `../node_modules/react-native-nitro-modules`)
+  - "op-sqlite (from `../node_modules/@op-engineering/op-sqlite`)"
   - RCT-Folly (from `build/rndeps-facades/RCT-Folly`)
   - RCTDeprecation (from `build/rncore-facades/RCTDeprecation`)
   - RCTRequired (from `build/rncore-facades/RCTRequired`)
@@ -2078,6 +2101,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native-data-scanner"
   NitroModules:
     :path: "../node_modules/react-native-nitro-modules"
+  op-sqlite:
+    :path: "../node_modules/@op-engineering/op-sqlite"
   RCT-Folly:
     :path: build/rndeps-facades/RCT-Folly
   RCTDeprecation:
@@ -2264,6 +2289,7 @@ SPEC CHECKSUMS:
   hermes-engine: 6a26e94b4a974cbadc751eed9caa12624c38f226
   NitroDataScanner: 03c5ffb6bad73ce82e42fdc5df288a1d15ad09b4
   NitroModules: bc0fc666f20b2ec140d276087e8ade17ad541985
+  op-sqlite: 70098be822743ace5edcb8894d6ff7c1b746ee1f
   RCT-Folly: 82921e585c0400eda46fac1068297aa9dfb035e4
   RCTDeprecation: 6d66040b74f4be203495adda55b49c1a25190291
   RCTRequired: ebf172e0b04196922ba4640458f9926c1bb34012

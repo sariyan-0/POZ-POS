@@ -1,3 +1,4 @@
+import { staffSession } from './StaffSession';
 import { apiConfig } from '../../config/api';
 import { StaffMember, StaffPermission } from '../../models/pos';
 import { apiClient } from './ApiClient';
@@ -46,7 +47,7 @@ export async function fetchStaff(): Promise<{ staff: StaffMember[]; syncedAt: st
   return { staff, syncedAt: typeof data.syncedAt === 'string' ? data.syncedAt : new Date().toISOString() };
 }
 
-export async function verifyStaffPin(pin: string): Promise<StaffMember> {
+export async function verifyStaffPin(pin: string, asApproval = false): Promise<StaffMember> {
   const payload = await apiClient.post<VerifyStaffPinResponse>(
     apiConfig.endpoints.verifyStaffPin,
     { pin },
@@ -56,6 +57,8 @@ export async function verifyStaffPin(pin: string): Promise<StaffMember> {
   if (
     payload?.success !== true ||
     !staff ||
+    typeof payload.data.staffToken !== 'string' ||
+    typeof payload.data.expiresIn !== 'number' ||
     typeof staff.id !== 'string' ||
     typeof staff.name !== 'string' ||
     !['owner', 'manager', 'cashier'].includes(staff.role)
@@ -63,6 +66,7 @@ export async function verifyStaffPin(pin: string): Promise<StaffMember> {
     throw new Error('Invalid staff verification response');
   }
 
+  staffSession.set(payload.data.staffToken, staff.id, payload.data.expiresIn, asApproval);
   return {
     id: staff.id,
     name: staff.name,

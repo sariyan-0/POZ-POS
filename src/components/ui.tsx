@@ -283,11 +283,11 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   pillText: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '800',
   },
   fieldLabel: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.8,
@@ -300,7 +300,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   metricLabel: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
   },
   metricValue: {

@@ -12,9 +12,12 @@
     "ios": "react-native run-ios",
     "lint": "eslint .",
     "start": "react-native start",
-    "test": "jest"
+    "test": "jest",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@oneregister/commerce-core": "file:../oneregister/packages/commerce-core",
+    "@op-engineering/op-sqlite": "^18.2.5",
     "@react-native-async-storage/async-storage": "^3.1.1",
     "@react-native-vector-icons/material-design-icons": "^13.1.2",
     "@react-native/new-app-screen": "0.87.0",

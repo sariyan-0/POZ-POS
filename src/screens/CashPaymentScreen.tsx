@@ -13,7 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePOS } from '../hooks/usePOS';
 import type { CurrencyCode } from '../models/pos';
 import { useRootNavigation } from '../navigation/AppNavigator';
-import { recordTransaction } from '../services/api/transactions';
+import { flushTransactionOutbox } from '../services/transactionOutbox';
 import { useAppTheme } from '../theme';
 import { formatCurrency } from '../utils/format';
 import { createId } from '../utils/id';
@@ -56,6 +56,7 @@ export function CashPaymentScreen() {
   } = usePOS();
   const [digits, setDigits] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const savingRef=useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [completedPayment, setCompletedPayment] =
     useState<CompletedCashPayment | null>(null);
@@ -108,16 +109,17 @@ export function CashPaymentScreen() {
   }
 
   async function confirmCashPayment() {
-    if (isSaving || receivedInCents < total) return;
+    if (savingRef.current || receivedInCents < total) return;
+    savingRef.current=true;
     setIsSaving(true);
     setError(null);
     const transactionReference = createId('cash-sale');
 
     try {
-      const transaction = createApprovedTransaction({
+      const transaction = await createApprovedTransaction({
         paymentMethod: 'cash',
         transactionReference,
-        paymentProvider: 'mock',
+        paymentProvider: 'cash',
         processorReference: transactionReference,
         cashDetails: {
           receivedInCents,
@@ -140,26 +142,7 @@ export function CashPaymentScreen() {
           transaction.cashDetails?.changeGivenInCents ?? changeInCents,
         currency: transaction.currency,
       });
-      recordTransaction(transaction)
-        .then(order => {
-          updateTransactionSync(transaction.id, {
-            serverSyncStatus: 'synced',
-            serverOrderId: order.id,
-            serverOrderNumber: order.order_number,
-            serverSyncError: undefined,
-            syncedAt: new Date().toISOString(),
-          });
-          syncCustomers().catch(() => undefined);
-        })
-        .catch(syncError => {
-          updateTransactionSync(transaction.id, {
-            serverSyncStatus: 'failed',
-            serverSyncError:
-              syncError instanceof Error
-                ? syncError.message
-                : 'Unable to sync transaction.',
-          });
-        });
+      flushTransactionOutbox(sale => updateTransactionSync(sale.id, sale)).then(()=>syncCustomers()).catch(()=>undefined);
     } catch (paymentError) {
       feedback.warning();
       setError(
@@ -168,6 +151,7 @@ export function CashPaymentScreen() {
           : 'The cash sale could not be completed.',
       );
     } finally {
+      savingRef.current=false;
       setIsSaving(false);
     }
   }

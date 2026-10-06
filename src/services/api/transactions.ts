@@ -8,7 +8,7 @@ type RecordedOrder = {
   order_number?: number;
 };
 
-export async function recordTransaction(transaction: Transaction): Promise<RecordedOrder> {
+export async function recordTransaction(transaction: Transaction, recoveryToken?: string): Promise<RecordedOrder> {
   if (transaction.customer) {
     await syncBackendCustomer({
       ...transaction.customer,
@@ -17,10 +17,7 @@ export async function recordTransaction(transaction: Transaction): Promise<Recor
       syncStatus: transaction.customer.stripeCustomerId ? 'synced' : 'local',
     });
   }
-  const discountInCents = transaction.items.reduce((sum, item) => {
-    const lineTotal = item.unitPriceInCents * item.quantity;
-    return item.type === 'discount' || lineTotal < 0 ? sum + Math.abs(lineTotal) : sum;
-  }, 0);
+  const discountInCents = transaction.items.reduce((sum, item) => sum + (item.discountInCents ?? (item.type === 'discount' ? Math.abs(item.unitPriceInCents*item.quantity) : 0)), 0);
   const provider = transaction.paymentMethod === 'cash'
     ? 'cash'
     : transaction.paymentProvider === 'stripe_terminal'
@@ -32,6 +29,11 @@ export async function recordTransaction(transaction: Transaction): Promise<Recor
 
   const payload = await apiClient.post<unknown>(apiConfig.endpoints.orders, {
     localOrderId: transaction.id,
+    recoverSale: Boolean(recoveryToken),
+    saleSnapshot: transaction.saleSnapshot,
+    catalogRevision: transaction.catalogRevision,
+    authorization: transaction.authorization,
+    receiptSnapshot: transaction.receipt,
     referenceCode: transaction.referenceCode,
     occurredAt: transaction.createdAt,
     staffId: transaction.staff?.id,
@@ -71,13 +73,13 @@ export async function recordTransaction(transaction: Transaction): Promise<Recor
         sku: item.sku,
         quantity: item.quantity,
         unitPriceInCents: discount ? 0 : item.unitPriceInCents,
-        discountInCents: discount ? Math.abs(lineTotal) : 0,
-        taxInCents: 0,
-        totalInCents: discount ? 0 : lineTotal,
-        metadata: { type: item.type, note: item.note, ...item.metadata },
+        discountInCents: item.discountInCents ?? (discount ? Math.abs(lineTotal) : 0),
+        taxInCents: item.taxInCents ?? 0,
+        totalInCents: item.totalInCents ?? (discount ? 0 : Math.round(lineTotal)),
+        metadata: { localItemId: item.id, subtotalInCents: item.subtotalInCents, taxLines: item.taxLines, type: item.type, note: item.note, ...item.metadata },
       };
     }),
-  }, { timeoutMs: 10000 });
+  }, { timeoutMs: 10000, headers: transaction.authorization ? { 'x-staff-authorization': transaction.authorization.staffToken, ...(transaction.authorization.approvalToken ? { 'x-staff-approval': transaction.authorization.approvalToken } : {}), ...(recoveryToken ? { 'x-recovery-authorization': recoveryToken } : {}) } : undefined });
 
   if (!payload || typeof payload !== 'object') throw new Error('Invalid transaction response');
   const root = payload as Record<string, unknown>;

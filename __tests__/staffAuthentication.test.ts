@@ -6,7 +6,7 @@ import {
   preserveAuthenticatedStaffId,
 } from '../src/context/POSProvider';
 import { initialPOSState } from '../src/services/mockData';
-import { savePOSState } from '../src/storage/persistence';
+import { savePOSState, loadPOSState } from '../src/storage/persistence';
 import { createPinCredentials } from '../src/utils/pin';
 import { StaffMember } from '../src/models/pos';
 import {
@@ -16,10 +16,7 @@ import {
   STAFF_WELCOME_MESSAGES,
 } from '../src/screens/StaffLockScreen';
 
-jest.mock('@react-native-async-storage/async-storage', () => ({
-  getItem: jest.fn(),
-  setItem: jest.fn(() => Promise.resolve()),
-}));
+jest.mock('@react-native-async-storage/async-storage',()=>{const values=new Map();return {getItem:jest.fn(async key=>values.get(key)??null),setItem:jest.fn(async(key,value)=>{values.set(key,value);})};});
 
 function staff(overrides: Partial<StaffMember> = {}): StaffMember {
   return {
@@ -49,11 +46,12 @@ test('cold launch clears legacy authentication and persistence omits the session
     currentStaffId: 'staff-1',
   };
   expect(normalizeState(state).currentStaffId).toBeUndefined();
+  await AsyncStorage.setItem('oneregister/device-connection/v1', JSON.stringify({business:{id:'fixture-business',name:state.settings.business.businessName},device:{id:'fixture-device'}}));
   await savePOSState(state);
-  const stored = JSON.parse(
-    (AsyncStorage.setItem as jest.Mock).mock.calls.at(-1)[1],
-  );
-  expect(stored.currentStaffId).toBeUndefined();
+  const stored = await loadPOSState();
+  expect(stored).not.toBeNull();
+  expect(stored?.currentStaffId).toBeUndefined();
+
 });
 
 test('brief background-safe reconciliation retains only active PIN-enabled staff', () => {

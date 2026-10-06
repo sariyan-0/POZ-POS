@@ -1,0 +1,56 @@
+name: Native release candidate
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: oneregister(client)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: sariyan-0/oneregister-server-
+          ref: ${{ vars.SERVER_RELEASE_REF || 'main' }}
+          token: ${{ secrets.PRODUCT_READ_TOKEN || github.token }}
+          path: oneregister
+      - uses: actions/checkout@v4
+        with:
+          path: oneregister(client)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test -- --runInBand
+      - run: npm run lint
+      - uses: actions/setup-java@v4
+        if: runner.os == 'Linux'
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+        if: runner.os == 'Linux'
+      - run: ./gradlew assembleRelease -PoneRegisterLocalRelease=true -PreactNativeArchitectures=arm64-v8a
+        if: runner.os == 'Linux'
+        working-directory: oneregister(client)/android
+      - uses: ruby/setup-ruby@v1
+        if: runner.os == 'macOS'
+        with:
+          ruby-version: '3.4'
+          working-directory: oneregister(client)
+          bundler-cache: true
+      - run: bundle exec pod install
+        if: runner.os == 'macOS'
+        working-directory: oneregister(client)/ios
+      - run: xcodebuild -workspace ios/PowersOfZeroPOS.xcworkspace -scheme PowersOfZeroPOS -configuration Release -sdk iphonesimulator -arch arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO -derivedDataPath build/ios build
+        if: runner.os == 'macOS'

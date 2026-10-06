@@ -6,6 +6,7 @@ import { useRootNavigation } from '../navigation/AppNavigator';
 import { useAppTheme } from '../theme';
 
 const rows = [
+  { key: 'taxes', label: 'Taxes', route: 'Taxes' as const },
   { key: 'all-items', label: 'All items', route: 'AllItems' as const },
   { key: 'modifiers', label: 'Modifiers', route: 'Modifiers' as const },
   { key: 'discounts', label: 'Discounts', route: 'Discounts' as const },

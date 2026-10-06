@@ -37,32 +37,37 @@ export function DiscountEditorScreen() {
   );
 
   const isEditing = !!existingDiscount;
-  const saveDisabled = !discount.name.trim();
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const saveDisabled = isSaving || !discount.name.trim();
 
-  function saveDiscount() {
+  async function saveDiscount() {
     if (saveDisabled) {
       return;
     }
 
-    upsertDiscount({
+    setIsSaving(true); setSaveError(null);
+    try {
+    await upsertDiscount({
       ...discount,
       name: discount.name.trim(),
       active: true,
     });
     navigation.goBack();
+    } catch (cause) { setSaveError(cause instanceof Error ? cause.message : "Unable to save. Your draft is retained."); } finally { setIsSaving(false); }
   }
 
-  function deleteDiscount() {
+  async function deleteDiscount() {
     if (!isEditing) {
       return;
     }
 
-    upsertDiscount({
+    setIsSaving(true);setSaveError(null);try { await upsertDiscount({
       ...discount,
       name: discount.name.trim(),
       active: false,
     });
-    navigation.goBack();
+    navigation.goBack(); } catch(cause) { setSaveError(cause instanceof Error?cause.message:"Unable to archive discount."); } finally {setIsSaving(false);}
   }
 
   return (
@@ -73,6 +78,7 @@ export function DiscountEditorScreen() {
         keyboardShouldPersistTaps="handled"
         style={{ flex: 1, backgroundColor: theme.colors.surface }}
         contentContainerStyle={styles.content}>
+        {saveError && <Text accessibilityRole="alert" style={{color:theme.colors.danger,padding:16}}>{saveError}</Text>}
         <View style={[styles.headerRow, { borderBottomColor: theme.colors.border }]}>
           <Pressable
             onPress={() => navigation.goBack()}

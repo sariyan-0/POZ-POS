@@ -6,6 +6,8 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { apiClient } from '../services/api/ApiClient';
+import { usePOS } from '../context/POSProvider';
 import { Platform } from 'react-native';
 import {
   DiscoverReadersParams,
@@ -131,7 +133,8 @@ const StripeTerminalContext = createContext<
 function StripeTerminalBootstrap({
   children,
 }: PropsWithChildren): React.JSX.Element {
-  const { connection } = useDeviceConnection();
+  const { connection, refresh } = useDeviceConnection();
+  const { syncCatalog } = usePOS();
   const isStripeReady = connection?.business.stripeConnected === true;
   const [status, setStatus] = useState<StripeTerminalStatus>('idle');
   const [initializationError, setInitializationError] = useState<string | null>(
@@ -583,6 +586,11 @@ function StripeTerminalBootstrap({
   ]);
 
   async function saveTerminalConfig(config: TerminalConfiguration) {
+    if(config.locationId && config.locationId!==terminalConfigRef.current.locationId){
+      await apiClient.patch('/api/devices/current',{stripeLocationId:config.locationId});
+      await refresh();
+      await syncCatalog();
+    }
     await terminalConfigService.save(config);
     terminalConfigRef.current = config;
     setTerminalConfig(config);
@@ -1134,6 +1142,8 @@ function StripeTerminalBootstrap({
     }
 
     const activeReader = sdkConnectedReader ?? connectedReader;
+    if (retrieved.paymentIntent.status === 'succeeded') return retrieved.paymentIntent;
+
     if (activeReader?.simulated && retrieved.paymentIntent.livemode) {
       throw new Error(
         'Stripe simulated readers cannot process live payments. Use a real Terminal reader or production Tap to Pay, or switch the backend to Stripe test mode while using the simulator.',

@@ -94,3 +94,15 @@ jest.mock('react-native-data-scanner', () => ({
     scanBarcode: jest.fn(async () => ({ format: 'qr', value: 'TEST-CODE' })),
   },
 }));
+
+jest.mock('@op-engineering/op-sqlite', () => {
+  const { DatabaseSync } = require('node:sqlite');
+  return { open: () => {
+    const database = new DatabaseSync(':memory:');
+    return { executeSync: (sql, parameters = []) => {
+      const statement = database.prepare(sql);
+      if (/^\s*(SELECT|PRAGMA)/i.test(sql)) return { rows: statement.all(...parameters) };
+      statement.run(...parameters); return { rows: [] };
+    } };
+  } };
+});

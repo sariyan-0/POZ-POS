@@ -5,6 +5,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -20,6 +21,11 @@ import {
   ListRow,
   PrimaryPillButton,
 } from '../components/POSUI';
+import { recordTransaction } from '../services/api/transactions';
+import { staffSession } from '../services/api/StaffSession';
+import { updateStoredSale } from '../storage/persistence';
+import { receiptText } from '../utils/receipt';
+import { fetchOrderDetail } from '../services/api/orders';
 import { usePOS } from '../hooks/usePOS';
 import { RefundRecord, Transaction } from '../models/pos';
 import { TransactionDetailRoute } from '../navigation/AppNavigator';
@@ -66,9 +72,17 @@ export function TransactionDetailScreen() {
   const route = useRoute<TransactionDetailRoute>();
   const theme = useAppTheme();
   const terminal = useAppStripeTerminal();
+  const { mergeServerTransactions } = usePOS();
   const transaction = state.transactions.find(
     item => item.id === route.params.transactionId,
   );
+  useEffect(()=>{
+    if(transaction?.serverOrderId) fetchOrderDetail(transaction.serverOrderId).then(sale=>mergeServerTransactions([sale])).catch(()=>undefined);
+  },[transaction?.serverOrderId,mergeServerTransactions]);
+  const [recoveryPin,setRecoveryPin]=useState('');
+  const [recoveryMessage,setRecoveryMessage]=useState('');
+  const [recovering,setRecovering]=useState(false);
+  const {authorizePermissionPin:authorizeRecoveryPin,updateTransactionSync:updateRecoveredSale}=usePOS();
   const [refundStep, setRefundStep] = useState<RefundStep>('idle');
   const [refundAmountMode, setRefundAmountMode] =
     useState<RefundAmountMode>('full');
@@ -240,6 +254,17 @@ export function TransactionDetailScreen() {
     setRestock(false);
   }
 
+  async function recoverSale(){
+    if(recovering)return;setRecovering(true);setRecoveryMessage('');
+    try{
+      const manager=await authorizeRecoveryPin(recoveryPin,'manage_register_settings');
+      if(!manager||!['owner','manager'].includes(manager.role))throw new Error('A manager must approve recovery.');
+      const token=staffSession.approval()?.token;if(!token)throw new Error('Approval expired. Enter the PIN again.');
+      const result=await recordTransaction(currentTransaction,token);
+      const recovered={...currentTransaction,serverSyncStatus:'synced' as const,serverOrderId:result.id,serverSyncError:undefined,syncedAt:new Date().toISOString()};
+      await updateStoredSale(recovered,'synced');updateRecoveredSale(recovered.id,recovered);setRecoveryPin('');setRecoveryMessage('Sale recovered and synced.');
+    }catch(error){setRecoveryMessage(error instanceof Error?error.message:'Unable to recover this sale.');}finally{setRecovering(false);}
+  }
   return (
     <AppScreen
       title="Transaction details"
@@ -247,6 +272,8 @@ export function TransactionDetailScreen() {
         currentTransaction.referenceCode ?? currentTransaction.id
       }`}
     >
+      <Pressable accessibilityRole="button" onPress={()=>Share.share({message:receiptText(currentTransaction,state.settings.business.businessName)})} style={{minHeight:48,justifyContent:'center',paddingHorizontal:16,backgroundColor:theme.colors.accentSoft,borderRadius:8}}><Text style={{color:theme.colors.accent}}>Share receipt</Text></Pressable>
+      {currentTransaction.serverSyncStatus==='failed'&&<View style={{padding:16,gap:12,backgroundColor:theme.colors.surface,borderRadius:12}}><Text style={{color:theme.colors.danger}}>{currentTransaction.serverSyncError??'This saved sale needs review.'}</Text><TextInput accessibilityLabel="Manager PIN for sale recovery" secureTextEntry keyboardType="number-pad" maxLength={4} value={recoveryPin} onChangeText={setRecoveryPin} placeholder="Manager PIN" placeholderTextColor={theme.colors.textMuted} style={{minHeight:48,fontSize:16,color:theme.colors.text,borderWidth:1,borderColor:theme.colors.border,borderRadius:8,paddingHorizontal:12}}/><Pressable disabled={recovering} accessibilityRole="button" onPress={()=>recoverSale()} style={{minHeight:48,justifyContent:'center'}}><Text style={{color:theme.colors.accent}}>{recovering?'Recovering…':'Authorize sale recovery'}</Text></Pressable>{recoveryMessage&&<Text accessibilityRole="alert" style={{color:theme.colors.text}}>{recoveryMessage}</Text>}</View>}
       <SummaryCard
         transaction={currentTransaction}
         refundedAmount={refundedAmount}
@@ -352,10 +379,11 @@ export function TransactionDetailScreen() {
         <DetailText
           label="Subtotal"
           value={formatCurrency(
-            currentTransaction.subtotal,
+            currentTransaction.subtotal + currentTransaction.items.reduce((sum,item)=>sum+(item.discountInCents??0),0),
             currentTransaction.currency,
           )}
         />
+        {currentTransaction.items.some(item=>(item.discountInCents??0)>0)&&<DetailText label="Discounts" value={`−${formatCurrency(currentTransaction.items.reduce((sum,item)=>sum+(item.discountInCents??0),0),currentTransaction.currency)}`}/>}
         {currentTransaction.taxLines?.length ? (
           currentTransaction.taxLines.map(taxLine => (
             <DetailText

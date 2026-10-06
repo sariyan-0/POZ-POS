@@ -67,8 +67,8 @@ export function SecuritySettingsScreen() {
     return <AppScreen title="People & security" subtitle="People and permissions are managed from the OneRegister web dashboard.">
       <View style={[styles.block, { backgroundColor: theme.colors.surface }]}>
         <Text style={[styles.label, { color: theme.colors.textMuted }]}>Dashboard managed</Text>
-        <Text style={[styles.helper, { color: theme.colors.textMuted }]}>This register receives active people, hashed PIN credentials, and app permissions from {connection.business.name}. Local edits are disabled so every register stays consistent.</Text>
-        {state.staffMembers.filter(member => member.active).map(member => <ListRow key={member.id} label={`${member.name} · ${roleLabel(member.role)}`} icon="account-lock-outline" />)}
+        <Text style={[styles.helper, { color: theme.colors.textMuted }]}>This register receives active people, staff profiles and permissions from {connection.business.name}. Local edits are disabled so every register stays consistent.</Text>
+        {state.staffMembers.filter(member => member.active).map(member => <ListRow key={member.id} label={`${member.name} · ${roleLabel(member.role)}`} icon="account-lock-outline" showChevron={false} />)}
         <Text style={[styles.helper, { color: staffSyncError ? theme.colors.danger : theme.colors.textMuted }]}>{staffSyncError ?? (lastStaffSyncAt ? `Last synced ${new Date(lastStaffSyncAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'People will sync automatically while online.')}</Text>
         <Pressable disabled={staffSyncStatus === 'syncing'} onPress={() => syncStaff().catch(() => undefined)} style={[styles.button, { backgroundColor: theme.colors.accent }]}><Text style={[styles.buttonLabel, { color: theme.colors.accentText }]}>{staffSyncStatus === 'syncing' ? 'Syncing…' : 'Sync people now'}</Text></Pressable>
       </View>

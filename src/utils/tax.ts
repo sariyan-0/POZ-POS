@@ -1,58 +1,29 @@
-import { CartItem, POSState, TaxLine } from '../models/pos';
+import { calculateSale, SaleInput } from '@oneregister/commerce-core';
+import { POSState } from '../models/pos';
 
+export function createSaleSnapshot(state: POSState): SaleInput {
+  const business = state.settings.business;
+  const taxes = business.taxDefinitions;
+  const hasDefaultFlags = taxes.some(t => t.isDefault !== undefined);
+  const defaults = hasDefaultFlags ? taxes.filter(t => t.isDefault && t.enabled) : business.defaultTaxRate
+    ? [{ id: 'tax-default', name: 'Tax', rate: business.defaultTaxRate, enabled: true }] : [];
+  return {
+    items: state.cart.filter(item => item.type !== 'discount').map(item => {
+      const product = state.products.find(p => p.id === item.productId);
+      const selected = product?.taxIds?.length ? taxes.filter(t => product.taxIds?.includes(t.id) && t.enabled) : defaults;
+      const behavior = product?.taxBehavior ?? 'inherit';
+      return { id: item.id, productId: item.productId, quantityMilli: Math.round(item.quantity * 1000), unitPriceInCents: item.unitPriceInCents, modifierIds: item.metadata?.selectedModifiers?.map(m => m.modifierId) ?? [],
+        inclusive: behavior === 'inclusive' || (behavior === 'inherit' && business.pricesIncludeTax === true),
+        taxes: item.taxable && behavior !== 'none' ? selected.map(t => ({ id: t.id, name: t.name, ratePpm: 'ratePpm' in t && typeof t.ratePpm === 'number' ? t.ratePpm : Math.round(t.rate * 10000), enabled: t.enabled })) : [] };
+    }),
+    discounts: state.cart.filter(item => item.type === 'discount').map(item => {
+      const discount = state.discounts.find(d => d.id === item.discountId);
+      return { id: item.discountId ?? item.id, type: discount?.type ?? 'fixed', amountPpm: discount?.type === 'percentage' ? Math.round(discount.amount * 10000) : undefined,
+        amountInCents: discount?.type === 'fixed' ? Math.round(discount.amount) : Math.abs(item.unitPriceInCents * item.quantity), applyAfterTaxes: discount?.applyAfterTaxes ?? item.metadata?.applyAfterTaxes };
+    }),
+  };
+}
 export function calculateCartTotals(state: POSState) {
-  const subtotal = state.cart.reduce(
-    (sum, item) => sum + item.unitPriceInCents * item.quantity,
-    0,
-  );
-  const enabledTaxes = state.settings.business.taxDefinitions.filter(
-    tax => tax.enabled,
-  );
-  const defaultTaxRate = state.settings.business.defaultTaxRate;
-  const fallbackTaxes: TaxLine[] = defaultTaxRate
-    ? [
-        {
-          taxId: 'tax-default',
-          name: 'Tax',
-          rate: defaultTaxRate,
-          amount: 0,
-        },
-      ]
-    : [];
-  const taxLinesById = new Map<string, TaxLine>();
-
-  function getApplicableTaxes(item: CartItem) {
-    if (item.type === 'product' && item.productId) {
-      const product = state.products.find(entry => entry.id === item.productId);
-      if (product?.taxIds?.length) {
-        return enabledTaxes.filter(tax => product.taxIds?.includes(tax.id));
-      }
-    }
-
-    return fallbackTaxes;
-  }
-
-  state.cart.forEach(item => {
-    if (!item.taxable) return;
-
-    const itemAmount = item.unitPriceInCents * item.quantity;
-    getApplicableTaxes(item).forEach(taxDefinition => {
-      const amount = Math.round(itemAmount * (taxDefinition.rate / 100));
-      if (!amount) return;
-
-      const taxId =
-        'taxId' in taxDefinition ? taxDefinition.taxId : taxDefinition.id;
-      const existing = taxLinesById.get(taxId);
-      taxLinesById.set(taxId, {
-        taxId,
-        name: taxDefinition.name,
-        rate: taxDefinition.rate,
-        amount: (existing?.amount ?? 0) + amount,
-      });
-    });
-  });
-
-  const taxLines = Array.from(taxLinesById.values());
-  const tax = taxLines.reduce((sum, line) => sum + line.amount, 0);
-  return { subtotal, tax, taxLines, total: subtotal + tax };
+  const result = calculateSale(createSaleSnapshot(state));
+  return { grossSubtotal: result.subtotalInCents, subtotal: result.subtotalInCents - result.discountInCents, tax: result.taxInCents, taxLines: result.taxLines, total: result.totalInCents, allocations: result.lines, discount: result.discountInCents };
 }

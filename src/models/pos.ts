@@ -1,4 +1,4 @@
-export type CurrencyCode = 'CAD';
+export type CurrencyCode = 'CAD' | 'USD';
 export type ProductUnitType = 'item' | 'mass';
 export type ProductMassUnit = 'kg' | 'lb';
 
@@ -18,6 +18,9 @@ export interface Product {
   isFavorite: boolean;
   trackInventory: boolean;
   taxIds?: string[];
+  taxBehavior?: 'inherit' | 'inclusive' | 'exclusive' | 'none';
+  categoryId?: string;
+  updatedAt?: string;
   optionSets?: ProductOptionSet[];
   modifierSetIds?: string[];
   imageUri?: string;
@@ -61,6 +64,7 @@ export interface Discount {
   requirePasscode: boolean;
   applyAfterTaxes: boolean;
   active: boolean;
+  updatedAt?: string;
 }
 
 export type CartItemType = 'product' | 'custom' | 'discount';
@@ -188,6 +192,11 @@ export interface TransactionItem {
   unitPriceInCents: number;
   taxable: boolean;
   note?: string;
+  subtotalInCents?: number;
+  discountInCents?: number;
+  taxInCents?: number;
+  totalInCents?: number;
+  taxLines?: TaxLine[];
   metadata?: CartItem['metadata'];
 }
 
@@ -201,7 +210,7 @@ export interface Transaction {
   total: number;
   currency: CurrencyCode;
   paymentMethod: PaymentMethod;
-  paymentProvider?: 'mock' | 'stripe_terminal';
+  paymentProvider?: 'cash' | 'mock' | 'stripe_terminal';
   processorReference?: string;
   status: PaymentStatus;
   customer?: TransactionCustomerSnapshot;
@@ -218,6 +227,10 @@ export interface Transaction {
   serverOrderNumber?: number;
   serverSyncError?: string;
   syncedAt?: string;
+  catalogRevision?: string;
+  saleSnapshot?: import('@oneregister/commerce-core').SaleInput;
+  authorization?: { staffToken: string; approvalToken?: string };
+  receipt?: { header?: string; footer?: string; taxRegistrationNumber?: string };
   items: TransactionItem[];
 }
 
@@ -226,12 +239,24 @@ export interface BusinessSettings {
   currency: CurrencyCode;
   defaultTaxRate: number;
   taxDefinitions: TaxDefinition[];
+  businessId?: string;
+  settingsUpdatedAt?: string;
+  country?: 'CA' | 'US';
+  pricesIncludeTax?: boolean;
+  taxRegistrationNumber?: string;
+  receiptHeader?: string;
+  receiptFooter?: string;
+  catalogRevision?: string;
 }
 
 export interface TaxDefinition {
   id: string;
   name: string;
   rate: number;
+  ratePpm?: number;
+  isDefault?: boolean;
+  archived?: boolean;
+  updatedAt?: string;
   enabled: boolean;
 }
 
