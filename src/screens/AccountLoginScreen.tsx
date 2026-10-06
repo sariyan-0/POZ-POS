@@ -11,6 +11,7 @@ export function AccountLoginScreen({ onBack, onConnected }: { onBack: () => void
   const [password, setPassword] = useState('');
   const [name, setName] = useState('Front counter');
   const [pending, setPending] = useState<PendingAccountLogin | null>(null);
+  const [approved, setApproved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -36,10 +37,7 @@ export function AccountLoginScreen({ onBack, onConnected }: { onBack: () => void
       }
       const status = await checkAccountLogin(pending);
       if (status === 'approved') {
-        setBusy(true);
-        await finishAccountLogin(pending);
-        setPending(null);
-        await onConnected();
+        setApproved(true);
       } else if (status === 'claimed') {
         await clearPendingAccountLogin();
         setPending(null);
@@ -55,12 +53,11 @@ export function AccountLoginScreen({ onBack, onConnected }: { onBack: () => void
       }
     } finally {
       checking.current = false;
-      setBusy(false);
     }
-  }, [onConnected, pending]);
+  }, [pending]);
 
   useEffect(() => {
-    if (!pending) return;
+    if (!pending || approved) return;
     void check();
     const timer = setInterval(() => { void check(); }, 3000);
     const app = AppState.addEventListener('change', state => { if (state === 'active') void check(); });
@@ -78,14 +75,14 @@ export function AccountLoginScreen({ onBack, onConnected }: { onBack: () => void
       } catch { /* Ignore unrelated URLs. */ }
     });
     return () => { clearInterval(timer); app.remove(); link.remove(); };
-  }, [check, pending]);
+  }, [approved, check, pending]);
 
   async function submit() {
-    if (busy || !email.trim() || !password || name.trim().length < 2) return;
+    if (busy || !email.trim() || !password) return;
     setBusy(true);
     setMessage(null);
     try {
-      const request = await startAccountLogin({ email: email.trim(), password, name: name.trim() });
+      const request = await startAccountLogin({ email: email.trim(), password });
       setPassword('');
       setPending(request);
     } catch (error) {
@@ -95,9 +92,25 @@ export function AccountLoginScreen({ onBack, onConnected }: { onBack: () => void
     }
   }
 
+  async function finish() {
+    if (!pending || !approved || busy || name.trim().length < 2) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      await finishAccountLogin(pending, name.trim());
+      setPending(null);
+      await onConnected();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not connect this register. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function startOver() {
     await clearPendingAccountLogin().catch(() => undefined);
     setPending(null);
+    setApproved(false);
     setMessage(null);
   }
 
@@ -106,9 +119,13 @@ export function AccountLoginScreen({ onBack, onConnected }: { onBack: () => void
     <StatusBar barStyle={theme.isDark ? 'light-content' : 'dark-content'} />
     <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingTop: insets.top + 20, paddingHorizontal: 24, paddingBottom: insets.bottom + 32, gap: 20 }}>
       <Pressable accessibilityRole="button" onPress={onBack} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: theme.colors.accent, fontSize: 16 }}>‹ Back to pairing</Text></Pressable>
-      <Text style={{ color: theme.colors.text, fontSize: 30, fontWeight: '700' }}>Sign in to OneRegister</Text>
-      {loading ? <ActivityIndicator color={theme.colors.accent} /> : pending ? <>
-        <Text style={{ color: theme.colors.textMuted, fontSize: 16, lineHeight: 24 }}>Check your email and tap the confirmation link. On the OneRegister page, confirm this register. This screen will finish connecting automatically.</Text>
+      <Text style={{ color: theme.colors.text, fontSize: 30, fontWeight: '700' }}>{approved ? 'Name this register' : 'Sign in to OneRegister'}</Text>
+      {loading ? <ActivityIndicator color={theme.colors.accent} /> : pending && approved ? <>
+        <Text style={{ color: theme.colors.textMuted, fontSize: 16, lineHeight: 24 }}>Email confirmed. Give this register a name so your team can recognize it.</Text>
+        <View style={{ gap: 8 }}><Text style={{ color: theme.colors.text }}>Register name</Text><TextInput accessibilityLabel="Register name" value={name} onChangeText={setName} autoCapitalize="words" autoFocus maxLength={64} placeholder="Front counter" placeholderTextColor={theme.colors.textMuted} returnKeyType="done" onSubmitEditing={() => void finish()} style={inputStyle} /></View>
+        <Pressable accessibilityRole="button" disabled={busy || name.trim().length < 2} onPress={() => void finish()} style={{ minHeight: 54, borderRadius: 9, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center', opacity: busy || name.trim().length < 2 ? 0.5 : 1 }}><Text style={{ color: theme.colors.accentText, fontWeight: '700', fontSize: 16 }}>{busy ? 'Connecting register…' : 'Finish setup'}</Text></Pressable>
+      </> : pending ? <>
+        <Text style={{ color: theme.colors.textMuted, fontSize: 16, lineHeight: 24 }}>Check your email and tap the confirmation link. Confirm this register on the OneRegister page, then return here to name it.</Text>
         <ActivityIndicator accessibilityLabel="Waiting for email confirmation" color={theme.colors.accent} />
         <Text style={{ color: theme.colors.textMuted }}>Waiting for approval…</Text>
         <Pressable accessibilityRole="button" onPress={() => void check()} disabled={busy} style={{ minHeight: 48, justifyContent: 'center' }}><Text style={{ color: theme.colors.accent }}>Check now</Text></Pressable>
@@ -117,8 +134,7 @@ export function AccountLoginScreen({ onBack, onConnected }: { onBack: () => void
         <Text style={{ color: theme.colors.textMuted, fontSize: 16, lineHeight: 24 }}>Use your owner account to connect this register. You’ll confirm it by email before it can be used.</Text>
         <View style={{ gap: 8 }}><Text style={{ color: theme.colors.text }}>Email address</Text><TextInput accessibilityLabel="OneRegister email address" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} autoComplete="email" placeholder="you@business.com" placeholderTextColor={theme.colors.textMuted} style={inputStyle} /></View>
         <View style={{ gap: 8 }}><Text style={{ color: theme.colors.text }}>Password</Text><TextInput accessibilityLabel="OneRegister password" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" autoComplete="current-password" placeholder="Password" placeholderTextColor={theme.colors.textMuted} style={inputStyle} /></View>
-        <View style={{ gap: 8 }}><Text style={{ color: theme.colors.text }}>Register name</Text><TextInput accessibilityLabel="Register name" value={name} onChangeText={setName} autoCapitalize="words" maxLength={80} style={inputStyle} /></View>
-        <Pressable accessibilityRole="button" disabled={busy || !email.trim() || !password || name.trim().length < 2} onPress={() => void submit()} style={{ minHeight: 54, borderRadius: 9, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.6 : 1 }}><Text style={{ color: theme.colors.accentText, fontWeight: '700', fontSize: 16 }}>{busy ? 'Sending confirmation…' : 'Continue with email'}</Text></Pressable>
+        <Pressable accessibilityRole="button" disabled={busy || !email.trim() || !password} onPress={() => void submit()} style={{ minHeight: 54, borderRadius: 9, backgroundColor: theme.colors.accent, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.6 : 1 }}><Text style={{ color: theme.colors.accentText, fontWeight: '700', fontSize: 16 }}>{busy ? 'Sending confirmation…' : 'Continue with email'}</Text></Pressable>
       </>}
       {message && <Text accessibilityRole="alert" style={{ color: theme.colors.danger, fontSize: 15 }}>{message}</Text>}
     </ScrollView>

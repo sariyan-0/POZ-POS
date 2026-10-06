@@ -24,7 +24,7 @@ export async function clearPendingAccountLogin() {
   await Keychain.resetGenericPassword({ service: SERVICE });
 }
 
-export async function startAccountLogin(input: { email: string; password: string; name: string }): Promise<PendingAccountLogin> {
+export async function startAccountLogin(input: { email: string; password: string }): Promise<PendingAccountLogin> {
   const payload = await apiClient.post<{ success: true; data: PendingAccountLogin }>(
     apiConfig.endpoints.startAccountLogin,
     { ...input, installationId: await getInstallationId(), platform: Platform.OS },
@@ -50,13 +50,13 @@ export async function checkAccountLogin(pending: PendingAccountLogin): Promise<'
   return payload.data.status;
 }
 
-export async function finishAccountLogin(pending: PendingAccountLogin) {
+export async function finishAccountLogin(pending: PendingAccountLogin, name: string) {
   const path = `${apiConfig.endpoints.accountLogin}/${encodeURIComponent(pending.id)}`;
   const payload = await apiClient.post<{ success: true; data: {
     token: string;
     device: { id: string; name: string; platform: string };
     business: { id: string; name: string };
-  } }>(path, { secret: pending.secret }, { baseUrlOverride: DEFAULT_BACKEND_URL, authTokenOverride: '' });
+  } }>(path, { secret: pending.secret, name }, { baseUrlOverride: DEFAULT_BACKEND_URL, authTokenOverride: '' });
   if (!payload.data?.token) throw new Error('The server did not connect this register.');
   await connectWithAccountToken(payload.data);
   await clearPendingAccountLogin();
