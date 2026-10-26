@@ -395,14 +395,9 @@ export function describeTerminalPaymentError(error: unknown): TerminalPaymentDeb
 export async function createBackendTerminalPaymentIntent(
   payload: CreatePaymentIntentPayload,
 ): Promise<BackendTerminalPaymentIntent> {
-  let quoteId: string | undefined;
-  if (payload.sale.saleSnapshot) {
-    const quote = await apiClient.post<{ data: { quoteId: string; totalInCents: number } }>('/api/checkout/quote', { saleSnapshot: payload.sale.saleSnapshot, catalogRevision: payload.sale.catalogRevision, localOrderId: payload.sale.localOrderId ?? payload.idempotencyKey });
-    if (quote.data.totalInCents !== payload.amount) throw new Error('The sale changed. Review it before payment.');
-    quoteId = quote.data.quoteId;
-  }
+  // The server validates and persists the quote in the same request as the intent.
+  // Retry the entire operation with the same sale ID so recovery stays idempotent.
   const body = {
-    quoteId,
     amount: payload.amount,
     currency: payload.currency.toLowerCase(),
     idempotencyKey: payload.idempotencyKey,

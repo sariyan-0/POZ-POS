@@ -1195,7 +1195,12 @@ function StripeTerminalBootstrap({
     setReaderInputOptions(null);
     setConnectionError(null);
 
+    const retrievalStartedAt = Date.now();
     const retrieved = await retrievePaymentIntent(clientSecret);
+    console.info('Terminal intent retrieval', {
+      durationMs: Date.now() - retrievalStartedAt,
+      succeeded: !retrieved.error && Boolean(retrieved.paymentIntent),
+    });
     if (retrieved.error || !retrieved.paymentIntent) {
       throw new Error(
         retrieved.error?.message || 'Unable to retrieve payment intent',

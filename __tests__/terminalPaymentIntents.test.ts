@@ -206,6 +206,26 @@ describe('terminalPaymentIntents', () => {
     );
   });
 
+  test('sends sale validation and intent creation in one request, including on retry', async () => {
+    const post = jest.spyOn(apiClient, 'post')
+      .mockRejectedValueOnce(new BackendConnectionError('connection_timeout', 'Timeout'))
+      .mockResolvedValueOnce({ success: true, data: { paymentIntentId: 'pi_one', clientSecret: 'secret' } });
+    const saleSnapshot = { items: [], discounts: [] };
+    await createBackendTerminalPaymentIntent({
+      amount: 113, currency: 'CAD', idempotencyKey: 'sale-combined',
+      sale: { ...sampleSale, localOrderId: 'sale-combined', catalogRevision: 'revision', saleSnapshot },
+    });
+    expect(post).toHaveBeenCalledTimes(2);
+    for (const [path, body] of post.mock.calls) {
+      expect(path).toBe('/api/payments/create-intent');
+      expect(body).toEqual(expect.objectContaining({
+        idempotencyKey: 'sale-combined',
+        sale: expect.objectContaining({ saleSnapshot, catalogRevision: 'revision', localOrderId: 'sale-combined' }),
+      }));
+    }
+    expect(post.mock.calls[0][1]).toEqual(post.mock.calls[1][1]);
+  });
+
   test('does not retry non-retryable configuration errors', async () => {
     const postSpy = jest
       .spyOn(apiClient, 'post')

@@ -341,6 +341,7 @@ export function MockPaymentScreen() {
       method === 'card_reader' || method === 'tap_to_pay';
     attemptRef.current += 1;
     const token = attemptRef.current;
+    const preparationStartedAt = Date.now();
     let saleAmountAtStart = total;
     let saleCurrencyAtStart = state.settings.business.currency;
     setSelectedMethod(method);
@@ -428,6 +429,10 @@ export function MockPaymentScreen() {
           return;
         }
 
+        console.info('Terminal payment preparation', {
+          method,
+          durationMs: Date.now() - preparationStartedAt,
+        });
         failureStage = 'processing_payment';
         setPhaseMessage(
           method === 'tap_to_pay'
